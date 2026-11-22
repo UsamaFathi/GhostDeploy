@@ -22,6 +22,16 @@ class GitRepository:
         root = self.git("rev-parse", "--show-toplevel", label="Locate Git checkout")
         if Path(os.fsdecode(root.rstrip(b"\r\n"))).resolve() != self.path:
             raise GhostError("The configured Git checkout must be the repository root.")
+        grafts = self.git(
+            "rev-parse", "--git-path", "info/grafts", label="Locate Git graft metadata"
+        )
+        if os.path.lexists(self.path / os.fsdecode(grafts.rstrip(b"\r\n"))):
+            raise GhostError("Use an unmodified Git history without graft metadata.")
+        shallow = self.git(
+            "rev-parse", "--is-shallow-repository", label="Check history completeness"
+        )
+        if shallow.strip() != b"false":
+            raise GhostError("Use a full Git clone. Shallow history is unsupported.")
         try:
             self.git(
                 "config",
@@ -51,6 +61,8 @@ class GitRepository:
                 "protocol.file.allow=never",
                 "-c",
                 "http.sslVerify=true",
+                "-c",
+                "http.followRedirects=false",
                 *args,
             ],
             label=label,
@@ -86,12 +98,21 @@ class GitRepository:
 
     def default_target(self, base: str) -> tuple[str, str | None]:
         try:
-            return self.resolve(self.remote_ref), None
-        except CommandError:
+            self.git(
+                "show-ref",
+                "--verify",
+                "--quiet",
+                self.remote_ref,
+                label="Check local deployment branch ref",
+            )
+        except CommandError as exc:
+            if exc.returncode != 1:
+                raise
             return (
                 base,
                 "No local remote-tracking branch found. Pass --target-sha to compare a different commit.",
             )
+        return self.resolve(self.remote_ref), None
 
     def diff(self, base: str, target: str) -> list[Change]:
         fields = iter(

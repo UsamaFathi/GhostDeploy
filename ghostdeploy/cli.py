@@ -13,7 +13,7 @@ from rich.text import Text
 
 from ghostdeploy.config import load
 from ghostdeploy.config import validate as validate_config
-from ghostdeploy.core import GhostError, Runner
+from ghostdeploy.core import GhostError, Runner, safe_error
 from ghostdeploy.deploy import Executor
 from ghostdeploy.files import write_atomic
 from ghostdeploy.git import GitRepository
@@ -38,14 +38,10 @@ def command(function):
     def guarded(*args, **kwargs):
         try:
             return function(*args, **kwargs)
-        except GhostError as exc:
-            if kwargs.get("output") == "json":
-                emit_json({"ok": False, "error": str(exc)})
-            else:
-                err.print(Text(f"Error: {exc}", style="red"))
-            raise typer.Exit(1) from None
-        except OSError as exc:
-            message = f"Filesystem operation failed: {exc.strerror or type(exc).__name__}."
+        except (typer.Exit, typer.Abort):
+            raise
+        except (Exception, KeyboardInterrupt) as exc:
+            message = safe_error(exc)
             if kwargs.get("output") == "json":
                 emit_json({"ok": False, "error": message})
             else:

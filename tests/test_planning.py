@@ -13,7 +13,8 @@ from ghostdeploy.config import validate
 from ghostdeploy.core import GhostError, Runner
 from ghostdeploy.deploy import Executor
 from ghostdeploy.git import GitRepository
-from ghostdeploy.planning import build_plan
+from ghostdeploy.planning import build_plan, manifest_version
+from ghostdeploy.runtime import DatabaseState
 
 
 def git(path, *args):
@@ -112,6 +113,103 @@ def test_fast_forward_and_dirty_tree_protection(repository):
     assert repo.clean_head() == target
     with pytest.raises(GhostError, match="full lowercase"):
         repo.commit("--help")
+    with pytest.raises(GhostError, match="Resolve"):
+        repo.commit("0" * 40)
+    git(path, "switch", "-c", "different")
+    with pytest.raises(GhostError, match="configured branch"):
+        repo.clean_head()
+
+
+def test_manifest_coverage_with_multiple_roots_and_three_databases(repository, config_data):
+    path, _, _ = repository
+    (path / "primary").mkdir()
+    git(path, "mv", "attendance", "primary/attendance")
+    (path / "secondary").mkdir()
+    git(path, "mv", "inventory", "secondary/inventory")
+    module = path / "primary" / "attendance"
+    manifest = module / "__manifest__.py"
+    manifest.write_text(
+        repr({"name": "Attendance", "depends": ["inventory"], "version": "1.1"}), encoding="utf-8"
+    )
+    git(path, "add", ".")
+    git(path, "commit", "-m", "Set up the two roots")
+    base = git(path, "rev-parse", "HEAD")
+    for relative in (
+        "models/shift.py",
+        "views/shift.xml",
+        "security/ir.model.access.csv",
+        "static/src/shift.js",
+        "misc/résumé file.dat",
+        "docs/guide.md",
+    ):
+        output = module / relative
+        output.parent.mkdir(parents=True, exist_ok=True)
+        output.write_text(relative, encoding="utf-8")
+    git(path, "add", ".")
+    git(path, "commit", "-m", "Mixed attendance changes")
+    target = git(path, "rev-parse", "HEAD")
+    config_data["odoo"]["addons_path"] = ["/opt/addons/primary", "/opt/addons/secondary"]
+    config_data["deployment"]["databases"].append("company_c")
+    config = validate(config_data)
+    repo = GitRepository(path, "main", Runner())
+    installed = {
+        "company_a": frozenset({"attendance", "inventory", "payroll"}),
+        "company_b": frozenset({"attendance", "inventory"}),
+        "company_c": frozenset({"inventory"}),
+    }
+    summary = build_plan(config, repo, base_sha=base, target_sha=target, installed=installed)
+    assert summary.candidate_upgrades == ("attendance",)
+    assert summary.installed_by_database == {
+        "company_a": ("attendance",),
+        "company_b": ("attendance",),
+        "company_c": (),
+    }
+    assert {category for item in summary.changes for category in item.classifications} == {
+        "potential_schema",
+        "odoo_data",
+        "security",
+        "code",
+        "unknown",
+        "documentation",
+    }
+    assert summary.expected_versions == {"attendance": "19.0.1.1"}
+    assert summary.restart_required and summary.review and not summary.blockers
+    installed["company_a"] -= {"inventory"}
+    mismatched = build_plan(config, repo, base_sha=base, target_sha=target, installed=installed)
+    assert any(
+        "company_a lacks installed dependencies" in reason for reason in mismatched.blockers
+    )
+    manifest.write_text(
+        repr({"name": "Attendance", "depends": ["base"], "version": "1.2"}), encoding="utf-8"
+    )
+    git(path, "add", ".")
+    git(path, "commit", "-m", "Change manifest dependencies")
+    changed = build_plan(config, repo, base_sha=target, target_sha=repo.resolve("HEAD"))
+    assert any("changed depends" in reason for reason in changed.blockers)
+    duplicate = path / "secondary" / "attendance"
+    duplicate.mkdir()
+    (duplicate / "__manifest__.py").write_text("{'name': 'Duplicate'}", encoding="utf-8")
+    git(path, "add", ".")
+    git(path, "commit", "-m", "Add duplicate technical name")
+    with pytest.raises(GhostError, match="Ambiguous addon"):
+        build_plan(config, repo, base_sha=target, target_sha=repo.resolve("HEAD"))
+    git(path, "rm", "secondary/attendance/__manifest__.py")
+    manifest.write_text("{'name': ", encoding="utf-8")
+    git(path, "add", ".")
+    git(path, "commit", "-m", "Introduce a manifest syntax error")
+    with pytest.raises(GhostError, match="dictionary literal"):
+        build_plan(config, repo, base_sha=target, target_sha=repo.resolve("HEAD"))
+
+
+@pytest.mark.parametrize(
+    ("series", "raw", "result"),
+    [
+        ("18.0", "1.2", "18.0.1.2"),
+        ("19.0", "19.0.1.2.3", "19.0.1.2.3"),
+    ],
+)
+def test_normalizes_target_versions_for_supported_runtime_series(series, raw, result):
+    assert manifest_version(raw, series) == result
 
 
 def test_removed_addon_is_blocked(repository, config_data):
@@ -124,6 +222,18 @@ def test_removed_addon_is_blocked(repository, config_data):
     )
     assert any("attendance was removed" in reason for reason in data.blockers)
     assert "attendance" in data.affected_addons
+
+
+def test_renamed_addon_is_blocked_and_new_addon_requires_review(repository, config_data):
+    path, _, base = repository
+    git(path, "mv", "attendance", "new_attendance")
+    git(path, "commit", "-m", "Rename an addon")
+    repo = GitRepository(path, "main", Runner())
+    report = build_plan(
+        validate(config_data), repo, base_sha=base, target_sha=repo.resolve("HEAD")
+    )
+    assert any("attendance was removed or renamed" in item for item in report.blockers)
+    assert any("New addon new_attendance requires review" in item for item in report.review)
 
 
 def test_execute_applies_a_docs_revision_then_reports_duplicate_as_unchanged(
@@ -154,6 +264,7 @@ def test_execute_applies_a_docs_revision_then_reports_duplicate_as_unchanged(
     )
     if os.name == "nt":
         monkeypatch.setattr("ghostdeploy.deploy.deployment_lock", lambda *_: nullcontext())
+    monkeypatch.setattr("ghostdeploy.deploy.bind_state_directory", lambda *_: None)
 
     class RunningHost:
         filestore = None
@@ -167,8 +278,11 @@ def test_execute_applies_a_docs_revision_then_reports_duplicate_as_unchanged(
         def preflight(self):
             assert git(path, "status", "--porcelain") == ""
 
-        def inspect_databases(self):
-            return {"company_a": frozenset({"attendance"}), "company_b": frozenset()}
+        def snapshot_databases(self):
+            return {
+                "company_a": DatabaseState(1, ("fixture",), {"attendance": "19.0.1.0"}),
+                "company_b": DatabaseState(2, ("fixture",), {}),
+            }
 
     executor = Executor(config, Runner(), RunningHost(config))
     options = {
@@ -177,6 +291,12 @@ def test_execute_applies_a_docs_revision_then_reports_duplicate_as_unchanged(
         "confirm_production": False,
         "fetch": False,
     }
+    monkeypatch.setattr(
+        GitRepository, "fetch", lambda self: None
+    )  # Keep all Git operations local.
+    with pytest.raises(GhostError, match="no longer the fetched deployment branch tip"):
+        executor.execute(base, **{**options, "fetch": True})
+    assert git(path, "rev-parse", "HEAD") == base
     first = executor.execute(target, **options)
     second = executor.execute(target, **options)
     assert first.status == "succeeded"
@@ -184,6 +304,8 @@ def test_execute_applies_a_docs_revision_then_reports_duplicate_as_unchanged(
     assert git(path, "rev-parse", "HEAD") == target
     assert (state / f"{first.id}.json").is_file()
     assert not list(state.glob("*.pending.json"))
+    with pytest.raises(GhostError, match="fast-forward"):
+        executor.execute(base, **options)
     pending = state / "odoo19.service.pending.json"
     pending.write_text('{"phase":"upgrading_database"}', encoding="utf-8")
     with pytest.raises(GhostError, match="unfinished deployment"):

@@ -156,6 +156,12 @@ class Config(Model):
             raise ValueError(
                 "runtime, Odoo configuration, backups and state must be outside the checkout"
             )
+        state = PurePosixPath(deploy.state_path)
+        backups = PurePosixPath(deploy.backup.path)
+        if state.is_relative_to(backups) or backups.is_relative_to(state):
+            raise ValueError("backup and state directories must be separate and may not overlap")
+        if checkout.is_relative_to(state) or checkout.is_relative_to(backups):
+            raise ValueError("backup and state directories may not contain the checkout")
         if deploy.environment == "production" and (
             not deploy.backup.enabled
             or not deploy.health_check.enabled

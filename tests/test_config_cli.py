@@ -1,6 +1,7 @@
 import json
 
 import pytest
+import yaml
 from typer.testing import CliRunner
 
 from ghostdeploy.cli import app
@@ -73,3 +74,57 @@ def test_unknown_credential_is_never_echoed(tmp_path):
     assert not json.loads(result.stdout)["ok"]
     assert "secret-test" not in result.stdout
     assert "secret-credential-test" not in result.stdout
+
+
+@pytest.mark.parametrize(
+    ("path", "value", "pattern"),
+    [
+        (("schema_version",), True, "schema_version"),
+        (("odoo", "service"), "odoo.service;bad", "odoo.service"),
+        (("odoo", "version"), "17.0", "odoo.version"),
+        (("repository", "branch"), "main*", "repository.branch"),
+        (("repository", "branch"), "refs/heads/../main", "repository.branch"),
+        (("deployment", "databases"), [], "deployment.databases"),
+        (("deployment", "state_path"), "/var/backups/ghostdeploy/state", "may not overlap"),
+    ],
+)
+def test_rejects_invalid_schema_boundaries(config_data, path, value, pattern):
+    section = config_data if len(path) == 1 else config_data[path[0]]
+    section[path[-1]] = value
+    with pytest.raises(GhostError, match=pattern):
+        validate(config_data)
+
+
+def test_declined_execution_is_nonzero_with_structured_output():
+    result = CliRunner().invoke(app, ["deploy", "--execute", "--dry-run", "--output", "json"])
+    assert result.exit_code == 1
+    assert json.loads(result.stdout)["ok"] is False
+
+
+def test_unexpected_preflight_error_keeps_json_and_hides_internal_details(
+    tmp_path, config_data, monkeypatch
+):
+    def fail(*args, **kwargs):
+        raise RuntimeError("synthetic confidential details")
+
+    monkeypatch.setattr("ghostdeploy.cli.Executor.execute", fail)
+    config = tmp_path / "deploy.yml"
+    config.write_text(yaml.safe_dump(config_data), encoding="utf-8")
+    result = CliRunner().invoke(
+        app,
+        [
+            "deploy",
+            "--config",
+            str(config),
+            "--execute",
+            "--target-sha",
+            "a" * 40,
+            "--output",
+            "json",
+        ],
+    )
+    assert result.exit_code == 1
+    assert json.loads(result.stdout) == {
+        "ok": False,
+        "error": "An unexpected GhostDeploy error occurred.",
+    }

@@ -1,5 +1,7 @@
 import configparser
 import errno
+import hashlib
+import json
 import os
 import platform
 import re
@@ -48,6 +50,16 @@ def private_directory(path: Path) -> None:
         raise GhostError(
             f"{path}: use a real directory owned by the service account with mode 0700."
         )
+    if path.resolve() != path.absolute():
+        raise GhostError(f"{path}: private storage must use a canonical path without symlinks.")
+    for parent in path.absolute().parents:
+        metadata = parent.stat()
+        if metadata.st_uid not in {0, os.geteuid()} or (
+            metadata.st_mode & 0o022 and not metadata.st_mode & stat.S_ISVTX
+        ):
+            raise GhostError(
+                f"{path}: a parent directory can be replaced by an untrusted account."
+            )
 
 
 @dataclass(frozen=True)
@@ -55,6 +67,21 @@ class Finding:
     check: str
     ok: bool
     detail: str
+
+
+@dataclass(frozen=True)
+class DatabaseState:
+    oid: int
+    server: tuple[str, ...]
+    versions: dict[str, str | None]
+
+
+@dataclass(frozen=True)
+class HealthEvidence:
+    systemd_active: bool
+    process_pid: int
+    http_status: int | None
+    application_verified: bool = False
 
 
 class NoRedirect(HTTPRedirectHandler):
@@ -72,9 +99,10 @@ class Host:
         self.filestore: Path | None = None
         self.external_addons: set[Path] = set()
         self.skip_auto_install = False
+        self.config_digest: bytes | None = None
 
     def systemd(self) -> dict[str, str]:
-        properties = "LoadState,ActiveState,MainPID,User,DynamicUser,KillMode,SendSIGKILL"
+        properties = "Id,LoadState,ActiveState,MainPID,User,DynamicUser,KillMode,SendSIGKILL"
         raw = self.runner.run(
             [SYSTEMCTL, "show", f"--property={properties}", "--", self.odoo.unit],
             label="Inspect systemd service",
@@ -83,6 +111,8 @@ class Host:
         service = dict(line.split("=", 1) for line in raw.decode().splitlines() if "=" in line)
         if service.get("LoadState") != "loaded":
             raise GhostError(f"Systemd unit {self.odoo.unit} is missing, masked or unloaded.")
+        if service.get("Id") != self.odoo.unit:
+            raise GhostError("Use the canonical systemd unit name rather than an alias.")
         if service.get("User") != self.odoo.service_user or service.get("DynamicUser") != "no":
             raise GhostError(
                 f"Set User={self.odoo.service_user} on {self.odoo.unit} and disable DynamicUser."
@@ -175,8 +205,8 @@ class Host:
     def read_odoo_config(self) -> None:
         parser = configparser.ConfigParser(interpolation=None)
         try:
-            with Path(self.odoo.config_file).open(encoding="utf-8") as stream:
-                parser.read_file(stream)
+            contents = Path(self.odoo.config_file).read_bytes()
+            parser.read_string(contents.decode("utf-8"))
             options = parser["options"]
         except (OSError, ValueError, KeyError, configparser.Error):
             raise GhostError("Cannot read the Odoo configuration [options] section.") from None
@@ -190,6 +220,8 @@ class Host:
             for key in (
                 "init",
                 "update",
+                "reinit",
+                "save",
                 "test_enable",
                 "test_tags",
                 "db_template_overrides",
@@ -217,6 +249,11 @@ class Host:
         if not managed <= roots:
             raise GhostError(
                 "Include every GhostDeploy addon root in the Odoo configuration addons_path."
+            )
+        checkout = Path(self.config.repository.checkout_path).resolve()
+        if any(root.is_relative_to(checkout) for root in roots - managed):
+            raise GhostError(
+                "Every Odoo addon root inside the checkout must be managed by GhostDeploy."
             )
         self.pg_settings = {
             variable: value
@@ -252,10 +289,26 @@ class Host:
             data_dir / "addons" / self.odoo.version,
         }
         self.external_addons = (roots | {root.resolve() for root in defaults}) - managed
+        self.config_digest = hashlib.sha256(contents).digest()
+
+    def require_same_config(self) -> None:
+        if (
+            self.config_digest is not None
+            and hashlib.sha256(Path(self.odoo.config_file).read_bytes()).digest()
+            != self.config_digest
+        ):
+            raise GhostError(
+                "Odoo configuration changed during deployment. Reconcile it before continuing."
+            )
 
     def prepare_upgrades(self, modules: set[str]) -> None:
         for module in modules:
-            if any((root / module / "__manifest__.py").exists() for root in self.external_addons):
+            if any(
+                (root / module / "__manifest__.py").exists()
+                or (root / module / "__openerp__.py").exists()
+                or (root / f"{module}.zip").exists()
+                for root in self.external_addons
+            ):
                 raise GhostError(f"Addon {module} also exists in an unmanaged Odoo addon root.")
         help_text = self.runner.run(
             [*self.odoo_command(), "--help"],
@@ -298,7 +351,14 @@ class Host:
             raise GhostError("Use a PostgreSQL role with NOSUPERUSER and NOCREATEDB for upgrades.")
 
     def inspect_databases(self) -> dict[str, frozenset[str]]:
-        installed = {}
+        return {
+            database: frozenset(state.versions)
+            for database, state in self.snapshot_databases().items()
+        }
+
+    def snapshot_databases(self) -> dict[str, DatabaseState]:
+        self.require_same_config()
+        states = {}
         for database in self.config.deployment.databases:
             answer = self.runner.run(
                 [
@@ -307,35 +367,57 @@ class Host:
                     "--no-password",
                     "--no-align",
                     "--tuples-only",
-                    "--field-separator",
-                    "|",
                     "--set",
                     "ON_ERROR_STOP=1",
                     "--command",
-                    "SELECT name, state FROM public.ir_module_module WHERE state IN "
-                    "('installed','to install','to upgrade','to remove') ORDER BY name",
+                    "SELECT pg_catalog.json_build_array(d.oid::bigint, "
+                    "pg_catalog.json_build_array(pg_catalog.pg_postmaster_start_time()::text, "
+                    "COALESCE(pg_catalog.inet_server_addr()::text, ''), pg_catalog.current_setting('port')), "
+                    "(SELECT COALESCE(pg_catalog.json_agg(pg_catalog.json_build_array(name, state, latest_version) "
+                    "ORDER BY name), '[]'::json) FROM public.ir_module_module "
+                    "WHERE state IN ('installed','to install','to upgrade','to remove'))) "
+                    "FROM pg_catalog.pg_database d WHERE d.datname = pg_catalog.current_database()",
                 ],
                 label=f"Inspect installed modules in {database}",
                 env=self.pg_env(database),
             )
-            modules = set()
-            for line in answer.decode().splitlines():
-                module, _, state = line.partition("|")
-                if state != "installed" or not MODULE.fullmatch(module):
-                    raise GhostError(
-                        f"Database {database} has pending addon operations or invalid module records. Reconcile them before deployment."
-                    )
-                modules.add(module)
-            installed[database] = frozenset(modules)
-        return installed
+            versions = {}
+            try:
+                oid, server, rows = json.loads(answer)
+                if (
+                    type(oid) is not int
+                    or not isinstance(server, list)
+                    or len(server) != 3
+                    or not all(isinstance(value, str) for value in server)
+                    or not isinstance(rows, list)
+                ):
+                    raise ValueError
+                for module, state, version in rows:
+                    if (
+                        state != "installed"
+                        or not MODULE.fullmatch(module)
+                        or module in versions
+                        or (version is not None and not isinstance(version, str))
+                    ):
+                        raise ValueError
+                    versions[module] = version
+            except (ValueError, TypeError):
+                raise GhostError(
+                    f"Database {database} has pending addon operations or invalid module records. Reconcile them before deployment."
+                ) from None
+            states[database] = DatabaseState(oid, tuple(server), versions)
+        return states
 
     def service_process(self, state: dict[str, str]) -> None:
         pid = state.get("MainPID", "")
         if not pid.isdecimal() or int(pid) <= 1:
             raise GhostError("The systemd service has no stable Odoo main process.")
         try:
-            argv = Path(f"/proc/{pid}/cmdline").read_bytes().rstrip(b"\0").split(b"\0")
-            service_env = Path(f"/proc/{pid}/environ").read_bytes().split(b"\0")
+            proc = Path(f"/proc/{pid}")
+            if proc.stat().st_uid != os.geteuid():
+                raise GhostError("The Odoo main process is not owned by the service account.")
+            argv = (proc / "cmdline").read_bytes().rstrip(b"\0").split(b"\0")
+            service_env = (proc / "environ").read_bytes().split(b"\0")
         except OSError:
             raise GhostError(
                 "Cannot inspect the Odoo process. Check the configured identity and /proc access."
@@ -351,9 +433,14 @@ class Host:
             raise GhostError(
                 "The running service must use the configured Odoo executable and '-c CONFIG' without extra CLI flags."
             )
-        if any(item.startswith(b"PG") and b"=" in item for item in service_env):
+        if state.get("ActiveState") != "active":
+            raise GhostError("The configured systemd service is no longer active.")
+        if any(
+            item.startswith((b"PG", b"ODOO_", b"PYTHONHOME=", b"PYTHONPATH=")) and b"=" in item
+            for item in service_env
+        ):
             raise GhostError(
-                "Move PostgreSQL settings from service environment variables into the Odoo configuration."
+                "Use Odoo config for connection and runtime settings. Remove PostgreSQL, Odoo and Python import overrides from the service environment."
             )
         service_home = next((item[5:] for item in service_env if item.startswith(b"HOME=")), None)
         if service_home != os.fsencode(Path.home()):
@@ -399,7 +486,11 @@ class Host:
         )
 
     def odoo_env(self) -> dict[str, str]:
-        env = env_without("PG")
+        env = {
+            key: value
+            for key, value in env_without("PG").items()
+            if not key.upper().startswith(("ODOO_", "PYTHONHOME", "PYTHONPATH"))
+        }
         env["PYTHONDONTWRITEBYTECODE"] = "1"
         return env
 
@@ -426,6 +517,7 @@ class Host:
             raise GhostError(
                 "Upgrade requires an allowlisted database and explicit valid module names."
             )
+        self.require_same_config()
         self.runner.run(
             [
                 *self.odoo_command(),
@@ -445,29 +537,39 @@ class Host:
             cwd=Path(self.odoo.executable).parent,
             env=self.odoo_env(),
             timeout=self.timeout,
+            capture=False,
         )
 
-    def health(self) -> None:
+    def health(self) -> HealthEvidence:
         health = self.config.deployment.health_check
         end = time.monotonic() + health.timeout_seconds
         opener = build_opener(ProxyHandler({}), NoRedirect())
+        reason = "systemd did not report an active service with a main process"
         while True:
             state = self.systemd()
             pid = state.get("MainPID", "0")
             if state.get("ActiveState") == "active" and pid.isdecimal() and int(pid) > 1:
+                self.service_process(state)
                 if not health.enabled or not health.url:
-                    return
+                    return HealthEvidence(True, int(pid), None)
+                reason = "the configured HTTP endpoint did not return 2xx for the active process"
                 try:
                     with opener.open(
                         health.url, timeout=max(0.05, min(2, end - time.monotonic()))
                     ) as response:
                         if 200 <= response.status < 300:
-                            return
+                            current = self.systemd()
+                            if (
+                                current.get("MainPID") == pid
+                                and current.get("ActiveState") == "active"
+                            ):
+                                self.service_process(current)
+                                return HealthEvidence(True, int(pid), response.status)
                 except (HTTPError, URLError, OSError):
                     pass
             remaining = end - time.monotonic()
             if remaining <= 0:
                 raise GhostError(
-                    "Odoo did not pass its service/HTTP health check before the timeout."
+                    f"Odoo did not pass its health check before the timeout: {reason}."
                 )
             time.sleep(min(1, remaining))

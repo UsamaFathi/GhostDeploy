@@ -8,7 +8,7 @@ from pathlib import Path
 import yaml
 
 from ghostdeploy.config import Config, load
-from ghostdeploy.core import GhostError, Runner
+from ghostdeploy.core import GhostError, Runner, safe_error
 from ghostdeploy.deploy import Executor
 from ghostdeploy.runtime import Host
 
@@ -152,9 +152,8 @@ def ssh_main() -> None:
             confirm_production=True,
             fetch=True,
         )
-    except (GhostError, OSError) as exc:
-        reason = str(exc) if isinstance(exc, GhostError) else "Filesystem operation failed."
-        print(json.dumps({"ok": False, "error": reason}))
+    except (Exception, KeyboardInterrupt) as exc:
+        print(json.dumps({"ok": False, "error": safe_error(exc)}))
         raise SystemExit(1) from None
     print(json.dumps(asdict(report)))
     raise SystemExit(1 if report.status == "failed" else 0)

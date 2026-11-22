@@ -1,5 +1,6 @@
 import ast
-from dataclasses import dataclass
+import re
+from dataclasses import dataclass, field
 from pathlib import PurePosixPath
 
 from ghostdeploy.config import MODULE, Config
@@ -36,6 +37,25 @@ class Plan:
     warnings: tuple[str, ...]
     installed_by_database: dict[str, tuple[str, ...]] | None
     preflight: tuple[str, ...] = CHECKS
+    expected_versions: dict[str, str] = field(default_factory=dict)
+
+
+def manifest_version(raw: object, series: str) -> str:
+    if not isinstance(raw, str) or not re.fullmatch(r"[0-9]+(?:\.[0-9]+){1,4}", raw):
+        raise ValueError("invalid version")
+    prefix = f"{series}."
+    if series == "19.0":
+        if raw.startswith(prefix):
+            return raw
+        if raw.startswith(series) or raw.count(".") > 2:
+            raise ValueError("invalid version")
+    elif raw.startswith(prefix):
+        if raw.count(".") not in {3, 4}:
+            raise ValueError("invalid version")
+        return raw
+    elif raw.count(".") > 2:
+        raise ValueError("invalid version")
+    return prefix + raw
 
 
 def discover(repo: GitRepository, tree, roots):
@@ -60,6 +80,11 @@ def discover(repo: GitRepository, tree, roots):
             or not manifest["name"].strip()
         ):
             raise GhostError(f"Odoo manifest is missing a display name: {str(path)!r}.")
+        dependencies = manifest.get("depends", [])
+        if not isinstance(dependencies, (list, tuple)) or any(
+            not isinstance(module, str) or not MODULE.fullmatch(module) for module in dependencies
+        ):
+            raise GhostError(f"Odoo manifest has an invalid dependency list: {str(path)!r}.")
         addons[addon] = (path.parent, manifest)
     return addons
 
@@ -101,7 +126,11 @@ def classify(path: PurePosixPath, directory: PurePosixPath | None) -> str:
         "security",
     } and path.suffix.lower() in {"", ".md", ".rst", ".txt"}:
         return "documentation"
-    if folders.intersection({"doc", "docs"}) and path.suffix.lower() in {".md", ".rst", ".txt"}:
+    if relative.parts[0].lower() in {"doc", "docs"} and path.suffix.lower() in {
+        ".md",
+        ".rst",
+        ".txt",
+    }:
         return "documentation"
     if not directory and path.parts[:2] == (".github", "workflows"):
         return "automation"
@@ -136,6 +165,15 @@ def build_plan(
     manifest_paths = {
         directory: addon for addons in (old, new) for addon, (directory, _) in addons.items()
     }
+    declared_data = {
+        directory / value
+        for addons in (old, new)
+        for directory, manifest in addons.values()
+        for key in ("data", "demo")
+        if isinstance(values := manifest.get(key), (tuple, list))
+        for value in values
+        if isinstance(value, str)
+    }
     changes = []
     candidates = set()
     touched = set()
@@ -151,6 +189,15 @@ def build_plan(
     ):
         blockers.add(
             "This release requires regular Git files. Symlinks and submodules need manual deployment."
+        )
+    if any(
+        (path.name == "__openerp__.py" and path.parent.parent in roots)
+        or (path.suffix.lower() == ".zip" and path.parent in roots)
+        for tree in (old_tree, new_tree)
+        for path in tree
+    ):
+        blockers.add(
+            "Legacy manifests and zipped addons in managed roots require manual deployment."
         )
     for addon, (directory, manifest) in new.items():
         previous = old.get(addon)
@@ -179,6 +226,8 @@ def build_plan(
             path = PurePosixPath(value)
             directory = next((parent for parent in path.parents if parent in manifest_paths), None)
             category = classify(path, directory)
+            if category == "documentation" and path in declared_data:
+                category = "odoo_data"
             categories.add(category)
             if directory is not None:
                 addon = manifest_paths[directory]
@@ -202,6 +251,16 @@ def build_plan(
         )
     databases = tuple(config.deployment.databases)
     mapping = None
+    expected_versions = {}
+    for addon in sorted(candidates):
+        try:
+            expected_versions[addon] = manifest_version(
+                new[addon][1].get("version", "1.0"), config.odoo.version
+            )
+        except ValueError:
+            blockers.add(
+                f"Addon {addon} has an invalid manifest version for Odoo {config.odoo.version}."
+            )
     if installed is not None:
         if set(installed) != set(databases):
             raise GhostError(
@@ -210,6 +269,13 @@ def build_plan(
         mapping = {
             database: tuple(sorted(installed[database] & candidates)) for database in databases
         }
+        for database, modules in mapping.items():
+            for addon in modules:
+                missing = set(new[addon][1].get("depends", [])) - installed[database]
+                if missing:
+                    blockers.add(
+                        f"Database {database} lacks installed dependencies of {addon}: {', '.join(sorted(missing))}."
+                    )
     return Plan(
         base,
         target,
@@ -222,4 +288,5 @@ def build_plan(
         restart,
         tuple(warnings),
         mapping,
+        expected_versions=expected_versions,
     )

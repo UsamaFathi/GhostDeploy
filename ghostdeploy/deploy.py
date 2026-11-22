@@ -1,20 +1,22 @@
+import errno
 import json
 import os
+import socket
 import stat
 from collections.abc import Iterator
-from contextlib import contextmanager
-from dataclasses import asdict, dataclass, field
+from contextlib import contextmanager, suppress
+from dataclasses import asdict, dataclass, field, replace
 from datetime import UTC, datetime
 from pathlib import Path
 from uuid import uuid4
 
 from ghostdeploy.backup import Backups
 from ghostdeploy.config import MODULE, SHA, Config
-from ghostdeploy.core import GhostError, Runner
+from ghostdeploy.core import GhostError, Runner, deployment_signals
 from ghostdeploy.files import sync_directory, write_atomic
 from ghostdeploy.git import GitRepository
 from ghostdeploy.planning import Plan, build_plan
-from ghostdeploy.runtime import Host, private_directory
+from ghostdeploy.runtime import DatabaseState, HealthEvidence, Host, private_directory
 
 
 @contextmanager
@@ -22,20 +24,82 @@ def deployment_lock(directory: Path, unit: str) -> Iterator[None]:
     import fcntl
 
     private_directory(directory)
-    descriptor = os.open(directory / f"{unit}.lock", os.O_RDWR | os.O_CREAT | os.O_NOFOLLOW, 0o600)
-    try:
-        info = os.fstat(descriptor)
-        if not stat.S_ISREG(info.st_mode) or info.st_uid != os.geteuid() or info.st_nlink != 1:
-            raise GhostError(
-                "Deployment lock must be a private regular file owned by the service account."
-            )
+    with socket.socket(socket.AF_UNIX, socket.SOCK_DGRAM) as guard:
         try:
-            fcntl.flock(descriptor, fcntl.LOCK_EX | fcntl.LOCK_NB)
-        except BlockingIOError:
+            guard.bind(f"\0ghostdeploy:{unit}")
+        except OSError as exc:
+            if exc.errno != errno.EADDRINUSE:
+                raise
             raise GhostError("A deployment for this service is already running.") from None
-        yield
-    finally:
-        os.close(descriptor)
+        descriptor = os.open(
+            directory / f"{unit}.lock",
+            os.O_RDWR | os.O_CREAT | os.O_NOFOLLOW | os.O_NONBLOCK,
+            0o600,
+        )
+        try:
+            info = os.fstat(descriptor)
+            if (
+                not stat.S_ISREG(info.st_mode)
+                or info.st_uid != os.geteuid()
+                or info.st_nlink != 1
+                or info.st_mode & 0o077
+            ):
+                raise GhostError(
+                    "Deployment lock must be a private regular file owned by the service account."
+                )
+            try:
+                fcntl.flock(descriptor, fcntl.LOCK_EX | fcntl.LOCK_NB)
+            except BlockingIOError:
+                raise GhostError("A deployment for this service is already running.") from None
+            yield
+        finally:
+            os.close(descriptor)
+
+
+class JournalError(GhostError):
+    """Evidence could not be safely persisted."""
+
+
+def bind_state_directory(unit: str, directory: Path, home: Path | None = None) -> None:
+    """A stable service account records which path owns its recovery history."""
+    import pwd
+
+    anchor = (home or Path(pwd.getpwuid(os.geteuid()).pw_dir)).resolve()
+    for component in (".local", "state", "ghostdeploy"):
+        anchor = anchor / component
+        anchor.mkdir(mode=0o700, exist_ok=True)
+        metadata = anchor.lstat()
+        if (
+            not stat.S_ISDIR(metadata.st_mode)
+            or metadata.st_uid not in {0, os.geteuid()}
+            or metadata.st_mode & 0o022
+        ):
+            raise GhostError(
+                "The service account's GhostDeploy state binding needs trusted directories under HOME."
+            )
+    private_directory(anchor)
+    binding = anchor / f"{unit}.state"
+    expected = str(directory.resolve()) + "\n"
+    try:
+        descriptor = os.open(binding, os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK)
+    except FileNotFoundError:
+        write_atomic(binding, expected)
+        return
+    with os.fdopen(descriptor, "rb") as stream:
+        metadata = os.fstat(stream.fileno())
+        if (
+            not stat.S_ISREG(metadata.st_mode)
+            or metadata.st_uid != os.geteuid()
+            or metadata.st_nlink != 1
+            or metadata.st_mode & 0o077
+        ):
+            raise GhostError(
+                "The service state binding must be a private regular file without links."
+            )
+        if stream.read(4097) != expected.encode("utf-8"):
+            raise GhostError(
+                "This service is bound to another state directory. Reconcile its original journal before moving storage."
+            )
 
 
 @dataclass
@@ -48,10 +112,14 @@ class Report:
     phase: str = "prepared"
     status: str = "in_progress"
     upgraded_databases: list[str] = field(default_factory=list)
+    verified_databases: list[str] = field(default_factory=list)
     in_progress_database: str | None = None
     backup_directory: str | None = None
     backups: list[dict] = field(default_factory=list)
     upgrades: dict[str, tuple[str, ...]] = field(default_factory=dict)
+    database_oids: dict[str, int] = field(default_factory=dict)
+    expected_versions: dict[str, str] = field(default_factory=dict)
+    health: HealthEvidence | None = None
     error: str | None = None
     recovery: str | None = None
     updated_at: str | None = None
@@ -64,19 +132,42 @@ class Journal:
         self.report = report
 
     def record(self, phase: str, *, create: bool = False) -> None:
+        updated_at = datetime.now(UTC).isoformat()
+        snapshot = replace(self.report, phase=phase, updated_at=updated_at)
+        try:
+            write_atomic(self.pending, self.content(snapshot), replace=not create)
+        except OSError:
+            raise JournalError(
+                f"Could not persist deployment phase {phase}. Inspect {self.pending}."
+            ) from None
         self.report.phase = phase
-        self.report.updated_at = datetime.now(UTC).isoformat()
-        write_atomic(self.pending, self.content(), replace=not create)
+        self.report.updated_at = updated_at
 
-    def content(self) -> str:
-        return json.dumps(asdict(self.report), indent=2) + "\n"
+    def content(self, snapshot: Report | None = None) -> str:
+        return json.dumps(asdict(snapshot or self.report), indent=2) + "\n"
 
-    def finish(self, *, clear: bool) -> None:
-        self.record(self.report.phase)
-        write_atomic(self.root / f"{self.report.id}.json", self.content())
-        if clear:
+    def archive(self) -> None:
+        try:
+            write_atomic(self.root / f"{self.report.id}.json", self.content())
+        except OSError:
+            raise JournalError(
+                f"Could not archive the deployment result. Inspect {self.pending}."
+            ) from None
+
+    def complete(self) -> None:
+        self.record("finalizing")
+        self.report.status = (
+            "unchanged" if self.report.base_sha == self.report.target_sha else "succeeded"
+        )
+        self.report.phase = "complete"
+        self.archive()
+        try:
             self.pending.unlink()
             sync_directory(self.root)
+        except OSError:
+            raise JournalError(
+                "Deployment operations completed and the report was archived, but journal cleanup could not be confirmed."
+            ) from None
 
 
 def select_upgrades(
@@ -124,6 +215,17 @@ def verify_paths(config: Config) -> None:
         outside.append(config.odoo.interpreter)
     if any(Path(path).resolve().is_relative_to(checkout) for path in outside):
         raise GhostError("Runtime files and storage must resolve outside the deployment checkout.")
+    state = Path(config.deployment.state_path).resolve()
+    backup = Path(config.deployment.backup.path).resolve()
+    if (
+        state.is_relative_to(backup)
+        or backup.is_relative_to(state)
+        or checkout.is_relative_to(state)
+        or checkout.is_relative_to(backup)
+    ):
+        raise GhostError(
+            "The checkout, state and backup locations must resolve to separate directories."
+        )
 
 
 class Executor:
@@ -150,7 +252,8 @@ class Executor:
         self.host.require_identity()
         verify_paths(self.config)
         unit = self.config.odoo.unit
-        with deployment_lock(self.directory, unit):
+        with deployment_signals(), deployment_lock(self.directory, unit):
+            bind_state_directory(unit, self.directory)
             pending = self.directory / f"{unit}.pending.json"
             if pending.exists() or pending.is_symlink():
                 raise GhostError(
@@ -179,11 +282,18 @@ class Executor:
                 repo.fetch()
             tip = repo.resolve(repo.remote_ref)
             target = repo.commit(target)
+            if fetch and target != tip:
+                raise GhostError(
+                    "The requested SHA is no longer the fetched deployment branch tip. Review the latest commit."
+                )
             if not repo.ancestor(target, tip):
                 raise GhostError(
                     "The exact target must be reachable from the configured origin branch."
                 )
-            installed = self.host.inspect_databases()
+            snapshots = self.host.snapshot_databases()
+            installed = {
+                database: frozenset(state.versions) for database, state in snapshots.items()
+            }
             plan = build_plan(
                 self.config, repo, base_sha=base, target_sha=target, installed=installed
             )
@@ -197,71 +307,107 @@ class Executor:
                     self.host.require_database_role(database)
                 backups.check_space(list(upgrades))
             report = Report(
-                uuid4().hex, unit, datetime.now(UTC).isoformat(), base, target, upgrades=upgrades
+                uuid4().hex,
+                unit,
+                datetime.now(UTC).isoformat(),
+                base,
+                target,
+                upgrades=upgrades,
+                database_oids={database: state.oid for database, state in snapshots.items()},
+                expected_versions=plan.expected_versions,
             )
             journal = Journal(self.directory, report)
             journal.record("prepared", create=True)
-            self.apply(journal, repo, plan, installed, backups)
+            self.apply(journal, repo, plan, snapshots, backups)
             return report
 
     def apply(
-        self, journal: Journal, repo: GitRepository, plan: Plan, installed: dict, backups: Backups
+        self,
+        journal: Journal,
+        repo: GitRepository,
+        plan: Plan,
+        snapshots: dict[str, DatabaseState],
+        backups: Backups,
     ) -> None:
         report = journal.report
+        expected = snapshots.copy()
+
+        def check_databases():
+            if self.host.snapshot_databases() != expected:
+                raise GhostError(
+                    "Database identity, module state or versions differ from the deployment plan. Reconcile before continuing."
+                )
+
+        def check_revision():
+            if repo.clean_head() != report.target_sha:
+                raise GhostError(
+                    "The checkout diverged from the approved revision during deployment."
+                )
+
         try:
             if plan.restart_required:
+                self.host.require_same_config()
                 journal.record("stopping_service")
                 self.host.service("stop")
                 self.host.require_inactive()
                 journal.record("service_stopped")
-                if self.host.inspect_databases() != installed:
-                    raise GhostError(
-                        "Database module state changed after planning. Replan after reconciling writers."
-                    )
+                check_databases()
             if report.upgrades:
                 report.backup_directory = str(backups.root / report.id)
                 journal.record("creating_backups")
                 backups.check_space(list(report.upgrades))
-                report.backups = backups.create(
+                for record in backups.create(
                     report.id, report.base_sha, report.target_sha, list(report.upgrades)
-                )
+                ):
+                    report.backups.append(record)
+                    journal.record("creating_backups")
             if report.base_sha != report.target_sha:
                 if plan.restart_required:
                     self.host.require_inactive()
+                    check_databases()
                 journal.record("synchronizing_code")
                 repo.sync(report.base_sha, report.target_sha)
                 journal.record("code_synchronized")
             for database, modules in report.upgrades.items():
                 self.host.require_inactive()
+                check_databases()
+                check_revision()
                 report.in_progress_database = database
                 journal.record("upgrading_database")
                 self.host.upgrade(database, modules)
                 report.upgraded_databases.append(database)
                 journal.record("verifying_database")
-                if self.host.inspect_databases() != installed:
-                    raise GhostError(
-                        "Installed modules or pending module states changed unexpectedly during an upgrade."
-                    )
+                state = expected[database]
+                expected[database] = replace(
+                    state,
+                    versions={
+                        **state.versions,
+                        **{module: report.expected_versions[module] for module in modules},
+                    },
+                )
+                check_databases()
+                check_revision()
+                report.verified_databases.append(database)
                 report.in_progress_database = None
                 journal.record("database_upgraded")
             if plan.restart_required:
                 self.host.require_inactive()
+                check_databases()
+                check_revision()
                 journal.record("starting_service")
                 self.host.service("start")
                 journal.record("checking_health")
-                self.host.health()
-                self.host.service_process(self.host.systemd())
-        except (GhostError, OSError, KeyboardInterrupt) as exc:
-            self.failed(journal, repo, exc, plan.restart_required)
+                report.health = self.host.health()
+                check_databases()
+                check_revision()
+        except (Exception, KeyboardInterrupt) as exc:
+            self.failed(journal, exc, plan.restart_required)
             return
 
-        report.status = "unchanged" if report.base_sha == report.target_sha else "succeeded"
-        journal.record("complete")
-        journal.finish(clear=True)
+        # Archival failures leave the pending journal and propagate as a CLI failure.
+        journal.complete()
 
-    def failed(
-        self, journal: Journal, repo: GitRepository, exc: BaseException, restart: bool
-    ) -> None:
+    def failed(self, journal: Journal, exc: BaseException, restart: bool) -> None:
         report = journal.report
         report.status = "failed"
         report.error = (
@@ -271,32 +417,26 @@ class Executor:
                 "Interrupted by operator."
                 if isinstance(exc, KeyboardInterrupt)
                 else "A filesystem operation failed."
+                if isinstance(exc, OSError)
+                else "An unexpected deployment error occurred."
             )
         )
-        clear = False
-        if report.phase in {"service_stopped", "creating_backups"}:
+        if restart and report.phase in {"starting_service", "checking_health"}:
             try:
-                if repo.clean_head() != report.base_sha:
-                    raise GhostError("Original checkout is no longer verified.")
-                self.host.require_inactive()
-                self.host.service("start")
-                self.host.health()
-                self.host.service_process(self.host.systemd())
-            except (GhostError, OSError):
-                report.recovery = "Could not verify the original service after the failure. Inspect the unit and checkout."
-            else:
-                report.recovery = "Original checkout and service verified. Inspect the failure and retry after correction."
-                clear = True
-        elif restart and report.phase in {"starting_service", "checking_health"}:
-            try:
+                report.recovery = "A stop of the newly started service is being attempted. Verify the systemd job and actual service status."
+                with suppress(JournalError):
+                    journal.record(report.phase)
                 self.host.service("stop")
                 self.host.require_inactive()
-            except (GhostError, OSError):
+            except (Exception, KeyboardInterrupt):
                 report.recovery = "Could not confirm Odoo stopped. Isolate traffic and inspect the unit immediately."
             else:
                 report.recovery = "Odoo is stopped after a start or health failure. Verify the code and database states."
         else:
             report.recovery = "Inspect the service, Git checkout and all reported database states before returning Odoo to service."
-        if not clear:
-            report.recovery += " If a migration ran, verify database and filestore compatibility together. Archive the pending journal only after reconciliation."
-        journal.finish(clear=clear)
+        report.recovery += " If a migration ran, verify shared code, every affected database and the matching filestores together. Archive the pending journal only after reconciliation."
+        try:
+            journal.record(report.phase)
+            journal.archive()
+        except (Exception, KeyboardInterrupt):
+            report.recovery += f" Failure reporting was incomplete. Inspect the last durable phase in {journal.pending}."
