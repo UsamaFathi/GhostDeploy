@@ -1,0 +1,30 @@
+services:
+  database:
+    image: postgres:17
+    environment:
+      POSTGRES_USER: ghost_fixture_admin
+      POSTGRES_PASSWORD: synthetic-fixture-admin-password
+    healthcheck:
+      test: [CMD, pg_isready, -h, 127.0.0.1, -U, ghost_fixture_admin, -d, postgres]
+      interval: 2s
+      timeout: 2s
+      retries: 30
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+  checks:
+    build:
+      context: ../..
+      dockerfile: tests/odoo/Dockerfile
+      args:
+        ODOO_TEST_VERSION: ${ODOO_TEST_VERSION:?set by the fixture runner}
+    depends_on:
+      database:
+        condition: service_healthy
+    environment:
+      ODOO_TEST_VERSION: ${ODOO_TEST_VERSION:?set by the fixture runner}
+    entrypoint: [/opt/ghostdeploy/bin/python, /fixture/check_upgrade.py]
+networks:
+  default:
+    internal: true
+volumes:
+  pgdata:

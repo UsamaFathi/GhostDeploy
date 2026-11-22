@@ -2,7 +2,7 @@
 
 GhostDeploy is an MIT-licensed deployment toolkit for developers who maintain self-hosted Odoo. It turns the usual SSH, Git, module upgrade, restart and verification steps into one auditable operation. You run it on your own host. It sends no telemetry and keeps backups on storage you control.
 
-The first release targets Odoo 18.0 and 19.0 on Ubuntu, with one systemd service, PostgreSQL and a GitHub repository of custom addons. It supports single and multiple database installations, multiple custom addon roots within one checkout, and optional GitHub Actions over SSH. The CLI and deployment engine have local tests. Live staging validation is required before production use.
+GhostDeploy 0.2.0.dev0 is **alpha**. It targets Odoo 18.0 and 19.0 on Ubuntu with one systemd service, PostgreSQL and a GitHub repository of custom addons. The [support and verification matrix](docs/testing.md#support-and-verification) distinguishes the local PostgreSQL restore from the Odoo, systemd and SSH checks that still need to run.
 
 ```sh
 python -m pip install -e '.[dev]'
@@ -24,7 +24,7 @@ Install from a reviewed checkout or a locally built wheel. The project has not b
 | `ghostdeploy workflow generate` | Generate a branch-scoped GitHub Actions workflow with pinned SSH host verification and concurrency. |
 | `ghostdeploy version` | Print the installed package version. |
 
-The executor holds a per-service lock and accepts only a clean, fast-forwardable checkout and a full SHA reachable from the configured origin branch. Its database inspection uses the Odoo connection settings and an explicit database allowlist. A changed Python file is a potential schema change. If `attendance` is installed in only two of three allowed databases, explicit `-u attendance` runs only in those two. The service stop and start still affects every database the instance serves.
+The executor holds a per-service lock and accepts only a clean checkout and a full commit SHA that can be fast-forwarded. A deployment that fetches, including GitHub Actions, requires the current branch tip. Database inspection records the identity and installed addon versions of every allowlisted database. If `attendance` is installed in only two of three allowed databases, GhostDeploy requests its upgrade only in those two and verifies the reported version afterward. A service stop and start still affects every database the instance serves.
 
 For upgrades, GhostDeploy checks storage, stops Odoo, and verifies PostgreSQL dumps and matching filestore archives before switching the Git revision. It writes a durable phase journal before code or database changes. When an upgrade fails, GhostDeploy records completed databases and the uncertain database, stops further upgrades and requires operator reconciliation. Restore and rollback are manual. See [operations](docs/operations.md) for the sequence, failure states and a restore drill.
 
@@ -40,4 +40,4 @@ python -m build
 python -m twine check --strict dist/*
 ```
 
-Contributions are welcome. See the [contributing guide](CONTRIBUTING.md) and [security reporting guidance](SECURITY.md).
+The [test guide](docs/testing.md) explains how to run the disposable PostgreSQL and Odoo suites without a VPS. See the [Phase 2 audit](docs/phase-2-audit.md), [contributing guide](CONTRIBUTING.md) and [security reporting guidance](SECURITY.md).

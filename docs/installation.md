@@ -27,6 +27,8 @@ SendSIGKILL=yes
 
 Use `visudo` to grant the actual service user permission to stop and start only the configured unit. The command paths and unit arguments must be exact. Keep the unit and any root-run scripts under admin control.
 
+Use the canonical unit name. The static service account needs a trusted, writable home for the persistent state-directory binding. Use the same account, home and state directory for forced SSH and local deployments. Keep PostgreSQL, Odoo and Python import overrides out of the service environment, and avoid editing the Odoo configuration or deployment checkout during a run.
+
 ```sudoers
 odoo ALL=(root) NOPASSWD: /usr/bin/systemctl stop odoo19.service, /usr/bin/systemctl start odoo19.service
 ```
