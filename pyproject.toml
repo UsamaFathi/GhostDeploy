@@ -1,0 +1,34 @@
+[build-system]
+requires = ["setuptools>=77"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "ghostdeploy"
+version = "0.1.0"
+description = "Deployment automation for self-hosted Odoo"
+readme = "README.md"
+requires-python = ">=3.11"
+license = "MIT"
+dependencies = ["pydantic>=2.10,<3", "PyYAML>=6.0.2,<7", "rich>=13.9,<16", "typer>=0.16,<1"]
+
+[project.optional-dependencies]
+dev = ["build>=1.2,<2", "pytest>=8,<10", "ruff>=0.11,<1", "twine>=6,<7"]
+
+[project.scripts]
+ghostdeploy = "ghostdeploy.cli:app"
+ghostdeploy-ssh = "ghostdeploy.workflow:ssh_main"
+
+[tool.setuptools.packages.find]
+include = ["ghostdeploy*"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+addopts = "-ra --strict-markers"
+
+[tool.ruff]
+target-version = "py311"
+line-length = 99
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "UP", "B", "SIM"]
+ignore = ["E501"]

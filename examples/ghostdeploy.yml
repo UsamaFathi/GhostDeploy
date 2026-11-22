@@ -1,0 +1,33 @@
+schema_version: 1
+project:
+  name: coffee
+odoo:
+  version: "19.0"
+  service: odoo19
+  service_user: odoo
+  executable: /opt/odoo/server/odoo-bin
+  interpreter: /opt/odoo/venv/bin/python
+  config_file: /etc/odoo19.conf
+  addons_path:
+    - /srv/odoo/custom-addons/addons
+    - /srv/odoo/custom-addons/verticals
+repository:
+  branch: main
+  checkout_path: /srv/odoo/custom-addons
+deployment:
+  environment: staging
+  databases:
+    - company_a
+    - company_b
+    - company_c
+  upgrade_policy: manual_review
+  state_path: /var/lib/ghostdeploy
+  command_timeout_seconds: 3600
+  backup:
+    enabled: true
+    path: /var/backups/ghostdeploy
+    min_free_mib: 512
+  health_check:
+    enabled: true
+    timeout_seconds: 60
+    url: http://127.0.0.1:8069/web/health
