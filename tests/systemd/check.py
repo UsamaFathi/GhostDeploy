@@ -203,7 +203,7 @@ def verify_recovery(host: SyntheticDatabaseHost, work: Path, base: str, target: 
 
 def main(root: Path) -> None:
     work = root / "work"
-    assert os.geteuid() != 0 and root.parent == Path("/run")
+    assert os.geteuid() != 0 and root.parent == Path("/var/lib")
     assert work.stat().st_uid == os.geteuid() and root.stat().st_uid == 0
     base, target = revisions(work / "addons")
     for folder in ("data", "backup", "state"):

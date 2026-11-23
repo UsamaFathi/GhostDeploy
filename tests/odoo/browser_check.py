@@ -4,6 +4,8 @@ from urllib.parse import urlencode, urlsplit, urlunsplit
 
 from fixture import ProcessHost, shell
 
+from ghostdeploy.core import GhostError
+
 LOGIN = "ghostdeploy-browser@example.invalid"
 PAGE = "/ghostdeploy-fixture"
 CONTROLLER = """\
@@ -103,6 +105,10 @@ def verify(
                 "rendered addon data and matching downloaded bytes",
                 flush=True,
             )
+        except Exception as exc:
+            raise GhostError(
+                f"Browser verification failed: {str(exc).replace(password, '[redacted]')}"
+            ) from None
         finally:
             context.close()
             browser.close()

@@ -82,6 +82,7 @@ jobs:
             exit 0
           fi
           dependencies=$(mktemp -d "$RUNNER_TEMP/ghostdeploy-systemd.XXXXXXXX")
+          trap 'rm -rf -- "$dependencies"' EXIT
           python -m pip install --target "$dependencies" .
           result=0
           sudo -n env GITHUB_ACTIONS="$GITHUB_ACTIONS" RUNNER_ENVIRONMENT="$RUNNER_ENVIRONMENT" \

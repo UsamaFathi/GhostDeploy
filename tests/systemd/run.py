@@ -42,7 +42,7 @@ def main(dependencies: Path) -> int:
 
     name = f"gdfx{uuid4().hex[:16]}"
     unit = name + ".service"
-    root = Path("/run") / name
+    root = Path("/var/lib") / name
     unit_path = Path("/run/systemd/system") / unit
     sudoers = Path("/etc/sudoers.d") / name
     state = subprocess.run(
