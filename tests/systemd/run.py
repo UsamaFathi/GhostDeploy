@@ -74,7 +74,9 @@ def main(dependencies: Path) -> int:
             os.chown(path, identity.pw_uid, identity.pw_gid)
         for filename in ("service.py", "check.py"):
             shutil.copyfile(Path(__file__).with_name(filename), root / filename)
-        shutil.copytree(dependencies, root / "lib")
+        library = root / "lib"
+        shutil.copytree(dependencies, library)
+        library.chmod(0o755)
         (root / "fixture.conf").write_text(
             f"[options]\naddons_path = {root}/work/addons\ndata_dir = {root}/work/data\n"
             "db_host = 127.0.0.1\ndb_port = 1\ndb_name = fixture_db\n"
