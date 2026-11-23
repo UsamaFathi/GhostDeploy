@@ -97,6 +97,8 @@ class FakeRunner:
             assert Path(args[-1]).exists()
         if args[0].endswith("/sudo"):
             self.active = args[3] == "start"
+            if self.active and self.fail == "interrupt after launch":
+                raise KeyboardInterrupt
             if not self.active:
                 self.new_oid = self.fail == "replacement database"
                 self.uninstalled = self.fail == "uninstalled module"
@@ -118,6 +120,8 @@ class SimulatedHost(Host):
         }
 
     def health(self):
+        if self.runner.fail == "interrupt during health":
+            raise KeyboardInterrupt
         if self.runner.fail == "health":
             raise GhostError("health-check timeout")
         assert self.runner.active
@@ -140,6 +144,8 @@ class SimulatedRepo:
         if self.fail == "git":
             raise GhostError("Git sync failed")
         self.head = target
+        if self.fail == "interrupt after sync":
+            raise KeyboardInterrupt
 
 
 @pytest.fixture
@@ -177,6 +183,7 @@ def test_manual_policy_requires_all_explicit_installed_candidates(config_data, p
     [
         (None, "complete", True, TARGET, ["company_a", "company_b"]),
         ("git", "synchronizing_code", False, BASE, []),
+        ("interrupt after sync", "synchronizing_code", False, TARGET, []),
         ("Stop odoo19.service", "stopping_service", True, BASE, []),
         ("unexpected stop", "stopping_service", True, BASE, []),
         ("Back up company_b", "creating_backups", False, BASE, []),
@@ -192,7 +199,9 @@ def test_manual_policy_requires_all_explicit_installed_candidates(config_data, p
         ("cancel upgrade", "upgrading_database", False, TARGET, ["company_a"]),
         ("no new version", "verifying_database", False, TARGET, ["company_a"]),
         ("Start odoo19.service", "starting_service", False, TARGET, ["company_a", "company_b"]),
+        ("interrupt after launch", "starting_service", False, TARGET, ["company_a", "company_b"]),
         ("health", "checking_health", False, TARGET, ["company_a", "company_b"]),
+        ("interrupt during health", "checking_health", False, TARGET, ["company_a", "company_b"]),
     ],
 )
 def test_operational_lifecycle(

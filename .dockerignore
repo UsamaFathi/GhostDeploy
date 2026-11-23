@@ -7,4 +7,5 @@
 !tests/
 !tests/odoo/
 !tests/odoo/check_upgrade.py
+!tests/odoo/fixture.py
 !tests/odoo/Dockerfile
