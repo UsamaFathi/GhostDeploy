@@ -17,6 +17,8 @@ jobs:
   disposable:
     runs-on: ubuntu-latest
     timeout-minutes: 25
+    env:
+      SSH_FIXTURE_ID: ghostdeploy-ssh-fixture-${{ github.run_id }}-${{ github.run_attempt }}
     steps:
       - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
         with:
@@ -40,9 +42,17 @@ jobs:
         run: python tests/odoo/run.py 18.0
       - if: inputs.suite == 'odoo19'
         run: python tests/odoo/run.py 19.0
-      - if: inputs.suite == 'ssh'
+      - name: Build isolated OpenSSH image
+        if: inputs.suite == 'ssh'
+        timeout-minutes: 6
+        run: docker build --file tests/ssh/Dockerfile --tag "$SSH_FIXTURE_ID" .
+      - name: Run loopback SSH assertions
+        if: inputs.suite == 'ssh'
+        timeout-minutes: 3
+        run: docker run --rm --name "$SSH_FIXTURE_ID" --network none "$SSH_FIXTURE_ID"
+      - name: Remove owned SSH fixture resources
+        if: always() && inputs.suite == 'ssh'
+        timeout-minutes: 1
         run: |
-          image="ghostdeploy-ssh-fixture:${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}"
-          trap 'docker image rm "$image" >/dev/null 2>&1 || true' EXIT
-          docker build --file tests/ssh/Dockerfile --tag "$image" .
-          docker run --rm --network none "$image"
+          docker container rm -f "$SSH_FIXTURE_ID" >/dev/null 2>&1 || true
+          docker image rm "$SSH_FIXTURE_ID" >/dev/null 2>&1 || true
