@@ -114,10 +114,20 @@ class FakeRunner:
 
 class SimulatedHost(Host):
     def systemd(self):
+        if self.runner.fail == "systemd failed" and self.start_attempted:
+            return {"ActiveState": "failed", "MainPID": "0"}
         return {
             "ActiveState": "active" if self.runner.active else "inactive",
             "MainPID": "42" if self.runner.active else "0",
         }
+
+    start_attempted = False
+
+    def service(self, action):
+        if action == "start" and self.runner.fail == "systemd failed":
+            self.start_attempted = True
+            raise CommandError("Start unit", "exited with status 1", 1)
+        super().service(action)
 
     def health(self):
         if self.runner.fail == "interrupt during health":
@@ -199,6 +209,7 @@ def test_manual_policy_requires_all_explicit_installed_candidates(config_data, p
         ("cancel upgrade", "upgrading_database", False, TARGET, ["company_a"]),
         ("no new version", "verifying_database", False, TARGET, ["company_a"]),
         ("Start odoo19.service", "starting_service", False, TARGET, ["company_a", "company_b"]),
+        ("systemd failed", "starting_service", False, TARGET, ["company_a", "company_b"]),
         ("interrupt after launch", "starting_service", False, TARGET, ["company_a", "company_b"]),
         ("health", "checking_health", False, TARGET, ["company_a", "company_b"]),
         ("interrupt during health", "checking_health", False, TARGET, ["company_a", "company_b"]),
@@ -260,6 +271,9 @@ def test_operational_lifecycle(
     ] == [f"database_verified:{name}" for name in persisted["verified_databases"]]
     assert ("service_checks_verified" in persisted["completed_phases"]) is (failure is None)
     assert "secret internal details" not in json.dumps(persisted)
+    if failure == "systemd failed":
+        assert "failed with no main PID" in persisted["recovery"]
+        assert "confirm the entire unit is stopped" in persisted["recovery"]
     assert persisted["verified_databases"] == ([] if failure == "no new version" else completed)
     if phase == "upgrading_database":
         assert persisted["in_progress_database"] == ("company_b" if completed else "company_a")

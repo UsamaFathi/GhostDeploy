@@ -146,7 +146,7 @@ def verify_lifecycle(host: Host, mode: Path) -> None:
     )
     assert result.strip() == b"timeout" and 2 <= monotonic() - started < 15
     host.service("stop")
-    host.require_inactive()
+    expect_error(host.require_inactive, "not fully stopped")
     print(f"PASS startup timeout exit={error.returncode}, Result=timeout, MainPID=0")
 
 
@@ -186,7 +186,9 @@ def verify_recovery(host: SyntheticDatabaseHost, work: Path, base: str, target: 
     assert (code, report["status"], report["phase"]) == (1, "failed", "starting_service"), report
     assert (report["base_sha"], report["target_sha"]) == (base, target)
     assert report["verified_databases"] == [DB] and report["in_progress_database"] is None
-    assert "exited with status" in report["error"] and "Odoo is stopped" in report["recovery"]
+    assert (
+        "exited with status" in report["error"] and "failed with no main PID" in report["recovery"]
+    )
     assert host.version == "19.0.2.0" and git(work / "addons", "rev-parse", "HEAD") == target
     backup = report["backups"][0]
     assert (backup["database"], backup["base_sha"], backup["target_sha"]) == (DB, base, target)
@@ -195,9 +197,11 @@ def verify_recovery(host: SyntheticDatabaseHost, work: Path, base: str, target: 
     assert json.loads(pending.read_text()) == {k: v for k, v in report.items() if k != "ok"}
     retry, error = deploy()
     assert retry == 1 and "unfinished deployment" in error["error"] and pending.is_file()
-    host.require_inactive()
+    state = host.systemd()
+    assert (state["ActiveState"], state["MainPID"]) == ("failed", "0")
+    expect_error(host.require_inactive, "not fully stopped")
     print(
-        "PASS real systemd startup failure: deploy and retry exit=1, journal preserved, unit inactive"
+        "PASS real systemd startup failure: deploy and retry exit=1, journal preserved, unit failed with MainPID=0"
     )
 
 

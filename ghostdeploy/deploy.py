@@ -445,6 +445,13 @@ class Executor:
                 self.host.require_inactive()
             except (Exception, KeyboardInterrupt):
                 report.recovery = "Could not confirm Odoo stopped. Isolate traffic and inspect the unit immediately."
+                with suppress(Exception, KeyboardInterrupt):
+                    state = self.host.systemd()
+                    if (state.get("ActiveState"), state.get("MainPID")) == ("failed", "0"):
+                        report.recovery = (
+                            "Systemd reports the unit failed with no main PID. "
+                            "Isolate traffic and confirm the entire unit is stopped."
+                        )
             else:
                 report.recovery = "Odoo is stopped after a start or health failure. Verify the code and database states."
         else:
