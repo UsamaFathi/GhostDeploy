@@ -39,3 +39,5 @@ sudo journalctl -u odoo19.service -n 100 --no-pager
 ```
 
 On failure, preserve the pending journal and matching backups. Use the [recovery decisions](operations.md#recovery-decisions) before retrying or starting the service. Complete the [release readiness gates](testing.md#release-gate) before relying on GhostDeploy for a real installation.
+
+If you are evaluating the deployment path, use the [disposable fixture](testing.md#disposable-odoo-and-ssh-integration) to rehearse a failed second-database upgrade and application restore first. The [systemd procedure](systemd-staging.md) then checks privileges and lifecycle on actual Ubuntu systemd.

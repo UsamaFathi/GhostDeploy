@@ -2,6 +2,8 @@
 
 ## 0.3.0.dev0 (unreleased)
 
+- Add a disposable Odoo executor fixture with real Git, PostgreSQL, Odoo and backups, an isolated Odoo process, intentional second-database failure and a functional restore.
+- Exercise the generated workflow against loopback OpenSSH and provide a reproducible disposable Ubuntu systemd procedure.
 - Add read-only Ubuntu service discovery and explicit database selection to the setup wizard.
 - Report host prerequisites with actionable PASS, WARN, FAIL and SKIP statuses and JSON output.
 - Expand plan and deployment feedback with scope, approvals, operation order, timestamps, checkpoints and artifact paths.
