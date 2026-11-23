@@ -18,6 +18,7 @@ services:
     build:
       context: ../..
       dockerfile: tests/odoo/Dockerfile
+      target: ${GHOSTDEPLOY_FIXTURE_STAGE:?set by the fixture runner}
       args:
         ODOO_TEST_VERSION: ${ODOO_TEST_VERSION:?set by the fixture runner}
     depends_on:
@@ -25,6 +26,7 @@ services:
         condition: service_healthy
     environment:
       ODOO_TEST_VERSION: ${ODOO_TEST_VERSION:?set by the fixture runner}
+      GHOSTDEPLOY_FIXTURE_STAGE: ${GHOSTDEPLOY_FIXTURE_STAGE:?set by the fixture runner}
       GHOSTDEPLOY_FIXTURE_TOKEN: ${GHOSTDEPLOY_FIXTURE_TOKEN:?set by the fixture runner}
     entrypoint: [/opt/ghostdeploy/bin/python, /fixture/check_upgrade.py]
 networks:

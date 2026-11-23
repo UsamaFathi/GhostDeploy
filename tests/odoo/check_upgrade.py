@@ -12,6 +12,7 @@ from time import monotonic
 from unittest.mock import patch
 from uuid import uuid4
 
+import browser_check
 from fixture import ADDON, ATTACHMENT, Cluster, ProcessHost, make_host, shell
 
 from ghostdeploy import cli
@@ -50,12 +51,13 @@ def write_addon(checkout: Path, minor: int, series: str, *, fail_second: bool) -
     )
     if minor:
         model += "    release_note = fields.Char()\n"
-    (addon / "__init__.py").write_text(model, encoding="utf-8")
+    (addon / "__init__.py").write_text(f"{model}\nfrom . import controller\n", encoding="utf-8")
+    (addon / "controller.py").write_text(browser_check.CONTROLLER, encoding="utf-8")
     extra = '<field name="release_note">schema verified</field>' if minor else ""
     (addon / "data.xml").write_text(
         '<odoo><record id="sample" model="ghostdeploy.fixture">'
         f'<field name="name">revision-{minor}</field>{extra}'
-        "</record></odoo>",
+        f"</record>{browser_check.ACCESS}</odoo>",
         encoding="utf-8",
     )
     if fail_second:
@@ -132,7 +134,8 @@ def app_record(host: ProcessHost, db: str, *, attachment: bool) -> dict:
 
 def write_attachment(host: ProcessHost, db: str, payload: bytes, *, create: bool) -> None:
     target = (
-        "env['ir.attachment'].create({'name': 'ghostdeploy-recovery.bin', 'datas': payload})"
+        "env['ir.attachment'].create({'name': 'ghostdeploy-recovery.bin', 'datas': payload, "
+        f"'res_model': 'ghostdeploy.fixture', 'res_id': env.ref('{ADDON}.sample').id}})"
         if create
         else "env['ir.attachment'].search([('name', '=', 'ghostdeploy-recovery.bin')], limit=1).write({'datas': payload})"
     )
@@ -190,7 +193,13 @@ def check_backups(report: dict, dbs: list[str], base: str, target: str) -> None:
 
 
 def restore(
-    root: Path, checkout: Path, cluster: Cluster, series: str, report: dict, expected: dict
+    root: Path,
+    checkout: Path,
+    cluster: Cluster,
+    series: str,
+    report: dict,
+    expected: dict,
+    password: str | None,
 ) -> None:
     restored = cluster.database(f"ghostdeploy_test_{uuid4().hex[:12]}_restored")
     if (
@@ -238,13 +247,17 @@ def restore(
     with restored_host.running():
         assert app_record(restored_host, restored, attachment=True) == expected
         assert restored_host.snapshot_databases()[restored].versions[ADDON] == f"{series}.1.0"
+        if password:
+            browser_check.verify(restored_host, restored, password, revision=0, content=ATTACHMENT)
     print(
         "PASS functional restore: independent Odoo process, baseline addon, restored ORM record and matching attachment bytes",
         flush=True,
     )
 
 
-def scenario(root: Path, cluster: Cluster, series: str, *, fail_second: bool) -> None:
+def scenario(
+    root: Path, cluster: Cluster, series: str, *, fail_second: bool, browser: bool = False
+) -> None:
     started = monotonic()
     root.mkdir()
     checkout, base, target = make_revisions(root, series, fail_second=fail_second)
@@ -253,10 +266,13 @@ def scenario(root: Path, cluster: Cluster, series: str, *, fail_second: bool) ->
     for db in dbs:
         cluster.database(db)
     host = make_host(root / "host", checkout, cluster, series, dbs)
+    password = uuid4().hex if browser else None
     try:
         for db in dbs:
             install(host, db, "web" if db == dbs[2] else ADDON)
         write_attachment(host, dbs[0], ATTACHMENT, create=True)
+        if password:
+            browser_check.create_reader(host, dbs[0], password)
         expected = app_record(host, dbs[0], attachment=True)
         assert expected["attachment"] == ATTACHMENT.hex()
         assert expected["store_fname"] and host.filestore is not None
@@ -335,7 +351,11 @@ def scenario(root: Path, cluster: Cluster, series: str, *, fail_second: bool) ->
                     app_record(host, dbs[0], attachment=True)["attachment"]
                     != expected["attachment"]
                 )
-                restore(root, checkout, cluster, series, report, expected)
+                if password:
+                    browser_check.verify(
+                        host, dbs[0], password, revision=1, content=b"changed after backup"
+                    )
+                restore(root, checkout, cluster, series, report, expected, password)
             print(
                 f"PASS Odoo {series} {'intentional partial failure' if fail_second else 'executor upgrade'}: "
                 f"3 allowlisted databases, CLI exit={exit_code}, {monotonic() - started:.1f}s",
@@ -345,9 +365,9 @@ def scenario(root: Path, cluster: Cluster, series: str, *, fail_second: bool) ->
         log = root / "host" / "odoo.log"
         if log.is_file():
             print(
-                log.read_text(encoding="utf-8", errors="replace")[-10_000:].replace(
-                    cluster.password, "[synthetic secret]"
-                ),
+                log.read_text(encoding="utf-8", errors="replace")[-10_000:]
+                .replace(cluster.password, "[synthetic secret]")
+                .replace(password or cluster.password, "[synthetic secret]"),
                 flush=True,
             )
         raise
@@ -358,6 +378,7 @@ def main() -> None:
     if series not in {"18.0", "19.0"}:
         raise GhostError("Select one supported Odoo series.")
     cluster = Cluster(Runner(), os.environ.get("GHOSTDEPLOY_FIXTURE_TOKEN", ""))
+    browser = os.environ.get("GHOSTDEPLOY_FIXTURE_STAGE") == "browser"
     version = (
         Runner().run(["/usr/bin/odoo", "--version"], label="Fixture Odoo version").decode().strip()
     )
@@ -365,7 +386,7 @@ def main() -> None:
     print(version, flush=True)
     with TemporaryDirectory(prefix="odoo-fixture-") as directory:
         root = Path(directory)
-        scenario(root / "success", cluster, series, fail_second=False)
+        scenario(root / "success", cluster, series, fail_second=False, browser=browser)
         scenario(root / "failure", cluster, series, fail_second=True)
 
 

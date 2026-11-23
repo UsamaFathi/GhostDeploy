@@ -7,7 +7,7 @@ on:
       suite:
         description: Local fixture suite to run on the hosted runner
         type: choice
-        options: [postgresql, odoo18, odoo19, ssh]
+        options: [postgresql, odoo18, odoo19, browser18, browser19, ssh]
         required: true
 
 permissions:
@@ -42,6 +42,10 @@ jobs:
         run: python tests/odoo/run.py 18.0
       - if: inputs.suite == 'odoo19'
         run: python tests/odoo/run.py 19.0
+      - if: inputs.suite == 'browser18'
+        run: python tests/odoo/run.py 18.0 --browser
+      - if: inputs.suite == 'browser19'
+        run: python tests/odoo/run.py 19.0 --browser
       - name: Build isolated OpenSSH image
         if: inputs.suite == 'ssh'
         timeout-minutes: 6

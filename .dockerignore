@@ -8,6 +8,7 @@
 !tests/odoo/
 !tests/odoo/check_upgrade.py
 !tests/odoo/fixture.py
+!tests/odoo/browser_check.py
 !tests/odoo/Dockerfile
 !tests/ssh/
 !tests/ssh/check_forced_command.py

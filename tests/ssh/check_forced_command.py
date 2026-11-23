@@ -138,8 +138,15 @@ def check(root: Path, env: dict[str, str]) -> None:
     generated = yaml.safe_load(workflow.generate(load(CONFIG)))
     assert set(generated["on"]) == {"workflow_dispatch"}
     assert generated["jobs"]["deploy"]["if"] == "github.ref == 'refs/heads/main'"
-    assert generated["concurrency"]["cancel-in-progress"] is False
-    script = generated["jobs"]["deploy"]["steps"][0]["run"]
+    assert generated["permissions"] == {}
+    assert generated["concurrency"] == {
+        "group": f"ghostdeploy-{UNIT}-production",
+        "cancel-in-progress": False,
+    }
+    step = generated["jobs"]["deploy"]["steps"][0]
+    assert step["env"]["TARGET_SHA"] == "${{ github.sha }}"
+    assert step["env"]["PRODUCTION_CONFIRMED"] == "${{ inputs.confirm_production }}"
+    script = step["run"]
 
     def run(overrides):
         result = subprocess.run(
@@ -159,12 +166,19 @@ def check(root: Path, env: dict[str, str]) -> None:
     assert failed.returncode == 1 and json.loads(failed.stdout)["status"] == "failed"
     unauthorized = run({"TARGET_SHA": "c" * 40})
     assert unauthorized.returncode == 1 and "approved exact revision" in unauthorized.stdout
+    malformed = run({"TARGET_SHA": TARGET[:12]})
+    assert malformed.returncode == 1 and "full lowercase SHA" in malformed.stderr
     needs_confirmation = run({"PRODUCTION_CONFIRMED": "false"})
     assert (
         needs_confirmation.returncode == 1 and "explicit confirmation" in needs_confirmation.stderr
     )
+    wrong_event = run({"GITHUB_EVENT_NAME": "push"})
+    assert wrong_event.returncode == 1 and "manual dispatch" in wrong_event.stderr
     wrong_key = run({"SSH_KNOWN_HOSTS": "127.0.0.1 " + key(root / "wrong-host")})
     assert wrong_key.returncode != 0 and "Host key verification failed" in wrong_key.stderr
+    key(root / "unauthorized-client")
+    wrong_identity = run({"SSH_PRIVATE_KEY": (root / "unauthorized-client").read_text()})
+    assert wrong_identity.returncode == 255 and "Permission denied" in wrong_identity.stderr
 
     known = root / "known_hosts"
     known.write_text(env["SSH_KNOWN_HOSTS"] + "\n")

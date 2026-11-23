@@ -13,6 +13,9 @@ from uuid import uuid4
 def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("version", choices=["18.0", "19.0"])
+    parser.add_argument(
+        "--browser", action="store_true", help="Add authenticated Chromium checks."
+    )
     args = parser.parse_args()
     if not shutil.which("docker"):
         parser.error("The local Docker CLI and Compose plugin are required.")
@@ -38,6 +41,7 @@ def main() -> None:
         if name not in {"DOCKER_HOST", "DOCKER_CONTEXT"} and not name.startswith("COMPOSE_")
     }
     env["ODOO_TEST_VERSION"] = args.version
+    env["GHOSTDEPLOY_FIXTURE_STAGE"] = "browser" if args.browser else "executor"
     env["GHOSTDEPLOY_FIXTURE_TOKEN"] = uuid4().hex
     project = f"ghostdeploy-fixture-{uuid4().hex}"
     command = [
