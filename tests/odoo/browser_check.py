@@ -46,8 +46,11 @@ def create_reader(host: ProcessHost, database: str, password: str) -> None:
     assert shell(
         host,
         database,
-        "user = env['res.users'].with_context(no_reset_password=True).create("
-        f"{{'name': 'GhostDeploy browser reader', 'login': {LOGIN!r}, 'password': {password!r}}})\n"
+        "users = env['res.users'].with_context(no_reset_password=True)\n"
+        "groups = 'group_ids' if 'group_ids' in users._fields else 'groups_id'\n"
+        "user = users.create({"
+        f"'name': 'GhostDeploy browser reader', 'login': {LOGIN!r}, 'password': {password!r}, "
+        "groups: [(6, 0, [env.ref('base.group_user').id])]})\n"
         "assert user.has_group('base.group_user') and not user.has_group('base.group_system')\n"
         "env.cr.commit()\n"
         "print('GHOSTDEPLOY_FIXTURE_RESULT={\"created\":true}')",
@@ -68,7 +71,7 @@ def verify(
     assert url.scheme == "http" and url.hostname == "127.0.0.1" and url.port
     assert database in host.config.deployment.databases
     origin = urlunsplit((url.scheme, url.netloc, "", "", ""))
-    login = "/web/login?" + urlencode({"db": database, "redirect": PAGE})
+    login = "/web/login?" + urlencode({"db": database, "redirect": PAGE, "login": LOGIN})
     with sync_playwright() as playwright:
         browser = playwright.chromium.launch()
         context = browser.new_context(
@@ -86,7 +89,7 @@ def verify(
             page.goto(login, wait_until="domcontentloaded")
             expect(page.locator("input[name=login]")).to_be_visible()
             page.goto(PAGE, wait_until="domcontentloaded")
-            expect(page.locator("input[name=login]")).to_be_visible()
+            assert urlsplit(page.url).path == "/web/login"
             expect(page.get_by_role("link", name="Download snapshot")).to_have_count(0)
             page.goto(login, wait_until="domcontentloaded")
             page.locator("input[name=login]").fill(LOGIN)
