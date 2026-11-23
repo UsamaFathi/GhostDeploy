@@ -1,7 +1,14 @@
 ARG ODOO_TEST_VERSION
 FROM odoo:${ODOO_TEST_VERSION} AS executor
 USER root
-RUN apt-get -o Acquire::Retries=2 -o Acquire::http::Timeout=20 update && apt-get install -y --no-install-recommends git python3-venv && rm -rf /var/lib/apt/lists/*
+RUN sed -i -e 's|http://archive.ubuntu.com/ubuntu|https://archive.ubuntu.com/ubuntu|' \
+        -e 's|http://security.ubuntu.com/ubuntu|https://security.ubuntu.com/ubuntu|' \
+        -e 's/^Components:.*/Components: main universe/' -e 's/ noble-backports//' \
+        /etc/apt/sources.list.d/ubuntu.sources \
+    && printf 'Acquire::https::Timeout "20";\nAcquire::Retries "2";\n' > /etc/apt/apt.conf.d/99fixture-network \
+    && apt-get update \
+    && apt-get install -y --no-install-recommends git python3-venv \
+    && rm -rf /var/lib/apt/lists/*
 WORKDIR /fixture
 COPY pyproject.toml README.md LICENSE ./
 COPY ghostdeploy ./ghostdeploy
