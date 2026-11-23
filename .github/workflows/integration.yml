@@ -1,4 +1,5 @@
 name: Disposable integration
+run-name: Disposable ${{ inputs.suite }} on ${{ github.ref_name }}
 
 on:
   workflow_dispatch:
@@ -6,7 +7,7 @@ on:
       suite:
         description: Local fixture suite to run on the hosted runner
         type: choice
-        options: [postgresql, odoo18, odoo19]
+        options: [postgresql, odoo18, odoo19, ssh]
         required: true
 
 permissions:
@@ -39,3 +40,9 @@ jobs:
         run: python tests/odoo/run.py 18.0
       - if: inputs.suite == 'odoo19'
         run: python tests/odoo/run.py 19.0
+      - if: inputs.suite == 'ssh'
+        run: |
+          image="ghostdeploy-ssh-fixture:${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}"
+          trap 'docker image rm "$image" >/dev/null 2>&1 || true' EXIT
+          docker build --file tests/ssh/Dockerfile --tag "$image" .
+          docker run --rm --network none "$image"

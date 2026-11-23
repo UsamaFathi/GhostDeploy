@@ -9,3 +9,6 @@
 !tests/odoo/check_upgrade.py
 !tests/odoo/fixture.py
 !tests/odoo/Dockerfile
+!tests/ssh/
+!tests/ssh/check_forced_command.py
+!tests/ssh/Dockerfile
