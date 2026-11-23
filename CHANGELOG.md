@@ -2,6 +2,8 @@
 
 ## 0.3.0.dev0 (unreleased)
 
+- Add authenticated browser checks for upgrade and restore in the Odoo 18 and 19 fixtures.
+- Exercise real systemd start, stop and recovery with command-scoped sudo on disposable Ubuntu, and expand restricted SSH checks.
 - Add a disposable Odoo executor fixture with real Git, PostgreSQL, Odoo and backups, an isolated Odoo process, intentional second-database failure and a functional restore.
 - Exercise the generated workflow against loopback OpenSSH and provide a reproducible disposable Ubuntu systemd procedure.
 - Add read-only Ubuntu service discovery and explicit database selection to the setup wizard.

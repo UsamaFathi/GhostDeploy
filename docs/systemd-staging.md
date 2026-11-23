@@ -1,5 +1,7 @@
 # Disposable Ubuntu systemd gate
 
+The manual `systemd` suite exercises the real service adapter and sudo policy with a synthetic unit on hosted Ubuntu. Use the procedure below for the combined Odoo, PostgreSQL and systemd gate. [Phase 3.6 validation](phase-36-beta-validation.md)
+
 Use an isolated Ubuntu VM booted with systemd. Reserve the VM, PostgreSQL cluster, test Unix account, Git checkout and two or three synthetic databases solely for this exercise. Follow the [installation guide](installation.md) and [first deployment tutorial](first-deployment.md). Use a dedicated canonical unit such as `ghostdeploy-e2e.service`. Keep the unit's direct Odoo command, the configured interpreter and the install guide's limited sudo permissions. Audit the VM identity before running any host-changing command.
 
 ## Observe a successful deployment
@@ -20,7 +22,7 @@ Use a fresh fixture for each row. Preserve the pending journal and every backup.
 
 | Case | Test setup | Evidence to record |
 | --- | --- | --- |
-| Failed start | In the disposable unit only, add an admin-owned `ExecStartPre` readiness check that fails while a dedicated test marker exists. Activate the marker after the initial healthy start. | The post-upgrade start fails, CLI exits nonzero, the journal records the attempted start, and the unit status is confirmed. |
+| Failed start | In the disposable unit only, add an admin-owned `ExecStartPre` readiness check that fails while a dedicated test marker exists. Activate the marker after the initial healthy start. | The post-upgrade start fails, CLI exits nonzero, and the journal records the attempted start. Inspect the unit and its cgroup even if systemd reports no main PID. |
 | Failed health | Use a synthetic test addon whose loopback probe responds successfully on the base revision and returns `503` on the target. | The executor stops the newly launched process, records `checking_health`, and blocks another deployment. |
 | Interrupted backup or migration | Interrupt the deployment process at the selected checkpoint while logged into the VM. Identify the fixture PID explicitly. | The journal remains, the phase and database are recoverable, and a second deployment is blocked. Inspect any surviving systemd transaction independently. |
 | Second database upgrade fails | Follow the container fixture's approach with a migration that fails only on B. | A is verified, B remains uncertain, C was never upgraded, and the canonical service is inactive pending reconciliation. |

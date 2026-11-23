@@ -5,14 +5,14 @@
 | Component | Scope | Evidence for 0.3.0.dev0 |
 | --- | --- | --- |
 | Ubuntu | Target platform for execution | Linux lock and journal binding regressions passed on Ubuntu CI. |
-| Odoo 18.0 | Targeted | Real executor upgrade, intentional failure and functional restore passed against `18.0-20261112` in Docker. |
-| Odoo 19.0 | Targeted | Real executor upgrade, intentional failure and functional restore passed against `19.0-20261112` in Docker. |
+| Odoo 18.0 | Targeted | Executor upgrade, intentional failure and authenticated Chromium restore passed against `18.0-20261112` in Docker. |
+| Odoo 19.0 | Targeted | Executor upgrade, intentional failure and authenticated Chromium restore passed against `19.0-20261112` in Docker. |
 | PostgreSQL | Supported by native clients | PostgreSQL 17.12 on Windows: real snapshot query, dump, archive decode and restore into a separate synthetic database. |
-| Systemd | Targeted | Lifecycle, process-status and failure behavior exercised with fixtures. A real Ubuntu systemd host remains pending. |
+| Systemd | Targeted | Real systemd and scoped sudo passed for a synthetic service on Ubuntu 24.04. Combined Odoo-on-systemd staging remains pending. |
 | Multi-database | Implemented | Verified with Git fixtures and real Odoo on three explicitly allowlisted databases, including intentional failure of the second upgrade. |
 | GitHub Actions and SSH | Implemented | Workflow syntax, Bash stub and disposable OpenSSH passed, including forced-command and host-key checks. Deployment from GitHub to a real staging instance remains pending. |
 
-Ubuntu is the deployment target. Windows supports development and offline planning. See the [Phase 3.5 integration report](phase-35-integration-report.md) for the verified commit, independent gates and exact evidence.
+Ubuntu is the deployment target. Windows supports development and offline planning. See the [Phase 3.5 integration report](phase-35-integration-report.md) and [Phase 3.6 verification report](phase-36-beta-validation.md) for tested revisions and evidence.
 
 ## Hermetic suite
 
@@ -59,9 +59,13 @@ Use Docker Engine or Docker Desktop with the Compose plugin and a local daemon. 
 ```sh
 python tests/odoo/run.py 18.0
 python tests/odoo/run.py 19.0
+python tests/odoo/run.py 18.0 --browser
+python tests/odoo/run.py 19.0 --browser
 ```
 
 The harness verifies a fresh PostgreSQL cluster by its unique marker before making changes. A unique Compose project owns its internal network, databases and volumes. The two scenarios each use three databases and a local two-commit Git checkout. The real executor stops and starts a private Odoo child process, backs up and upgrades only the first two databases, and exercises an intentional failure on the second. A separate Odoo instance checks a restored ORM record and attachment at the base revision. Real systemd and sudo are outside this container test. Initial builds require image and package downloads. [Official Odoo images](https://github.com/odoo/docker)
+
+With `--browser`, the same executor fixture also checks the Odoo login form, upgraded addon record and download in Chromium. A fresh browser session checks the restored base record and attachment.
 
 The SSH suite uses a separate image and loopback OpenSSH with ephemeral keys. It exercises the generated command, forced key restrictions, host-key rejection and exit propagation. The gateway substitutes a fixture executor, and GitHub reviewer rules and live Ubuntu integration remain separate.
 
@@ -73,13 +77,13 @@ docker run --rm --network none "$image"
 docker image rm "$image"
 ```
 
-Use a verified local Docker daemon. These image builds and database installs may take several minutes and require local image and volume storage. You can also dispatch the existing **Disposable integration** workflow with `postgresql`, `odoo18`, `odoo19` or `ssh`. Hosted runs use standard Ubuntu runners. Check the repository's eligibility and current account limits before dispatching. [GitHub Actions billing and usage](https://docs.github.com/en/actions/concepts/billing-and-usage)
+Use a verified local Docker daemon. These image builds and database installs may take several minutes and require local image and volume storage. You can also dispatch **Disposable integration** with `postgresql`, `odoo18`, `odoo19`, `browser18`, `browser19`, `ssh` or `systemd`. The systemd job is restricted to a disposable GitHub-hosted Ubuntu runner and provisions a synthetic service. Check the repository's eligibility and current account limits before dispatching. [GitHub Actions billing and usage](https://docs.github.com/en/actions/concepts/billing-and-usage)
 
 ## Release gate
 
 | Gate | Status |
 | --- | --- |
-| Hermetic tests, security regressions, Ruff and CLI smoke | Passed locally on Windows and the ordinary test suite passed on hosted Ubuntu. See [recorded evidence](phase-35-integration-report.md#recorded-evidence). |
+| Hermetic tests, security regressions, Ruff and CLI smoke | Passed on Windows and Ubuntu. See the [Phase 3.6 evidence](phase-36-beta-validation.md#recorded-evidence). |
 | First-time setup walkthrough and docs checks | Exercised through CLI fixtures for Odoo 18 and 19, including real temporary Git clones and a controlled host simulation. A fresh Ubuntu onboarding run remains pending. |
 | Build and verify wheel and sdist | Passed locally. |
 | PostgreSQL dump and restore into a disposable database | Passed locally with PostgreSQL 17.12. |
@@ -87,10 +91,11 @@ Use a verified local Docker daemon. These image builds and database installs may
 | Linux file and service-level lock | Passed on Ubuntu CI. |
 | Odoo 18 upgrade | Passed with real Odoo and the executor in Docker. |
 | Odoo 19 upgrade | Passed with real Odoo and the executor in Docker. |
-| Real systemd stop/start, sudo scope, process identity and health | Pending disposable Ubuntu host. |
+| Real systemd stop/start, sudo scope, process identity and health | Passed with the synthetic service on Ubuntu 24.04. |
+| Real Odoo, PostgreSQL and systemd deployment together | Pending disposable Ubuntu VM. |
 | Restricted command on a real OpenSSH server | Passed against disposable loopback OpenSSH. |
 | GitHub Actions SSH to a restricted staging user | Pending an authorized disposable staging host. |
-| Functional Odoo restore | ORM read and attachment bytes passed on both Odoo series. Authenticated browser login and download remain pending in disposable staging. |
+| Functional Odoo restore | ORM checks and authenticated browser login, record read and attachment download passed on both Odoo series in Docker. Combined host staging remains pending. |
 
 See the [staging procedure](operations.md#staging-validation-before-production) for the remaining service and application checks.
 

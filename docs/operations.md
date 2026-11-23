@@ -34,7 +34,7 @@ Use `journalctl -u odoo19.service` or the administrator-only Odoo log to diagnos
 
 ## Staging validation before production
 
-Run the [disposable container and PostgreSQL fixtures](testing.md#disposable-odoo-and-ssh-integration) first. They provide evidence about the Odoo CLI, database, backup and journal behavior without claiming real systemd coverage. Use the [systemd staging procedure](systemd-staging.md) for the actual stop, restart, health failure and interruption on an isolated Ubuntu VM.
+Run the [disposable integration fixtures](testing.md#disposable-odoo-and-ssh-integration) first. The Odoo images check the application and restore, and the hosted Ubuntu job checks the service adapter with a synthetic process. Use the [systemd staging procedure](systemd-staging.md) to exercise stop, restart, failure and interruption with Odoo on the same isolated Ubuntu VM.
 
 1. On a disposable Ubuntu VM, configure Odoo 18, PostgreSQL and systemd using a test service user and synthetic data. Repeat separately for Odoo 19.
 2. Use three databases. Install a small custom addon on two, and seed attachments in one. Create a commit with a deliberately small model or view change. Compare offline and database-aware plans, then run the dry run and verify that it makes no state changes.
