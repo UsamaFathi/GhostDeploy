@@ -2,26 +2,27 @@
 
 GhostDeploy is an MIT-licensed deployment toolkit for developers who maintain self-hosted Odoo. It turns the usual SSH, Git, module upgrade, restart and verification steps into one auditable operation. You run it on your own host. It sends no telemetry and keeps backups on storage you control.
 
-GhostDeploy 0.2.0.dev0 is **alpha**. It targets Odoo 18.0 and 19.0 on Ubuntu with one systemd service, PostgreSQL and a GitHub repository of custom addons. The [support and verification matrix](docs/testing.md#support-and-verification) distinguishes the local PostgreSQL restore from the Odoo, systemd and SSH checks that still need to run.
+GhostDeploy 0.3.0.dev0 is **alpha**. It targets Odoo 18.0 and 19.0 on Ubuntu with one systemd service, PostgreSQL and a GitHub repository of custom addons. Start with the [Quick start](docs/quick-start.md) for workstation, Odoo host and GitHub steps. The [support and verification matrix](docs/testing.md#support-and-verification) lists the checks that have run and the staging gates that remain.
 
 ```sh
+python3 -m venv .venv
+. .venv/bin/activate
 python -m pip install -e '.[dev]'
-ghostdeploy init
-ghostdeploy validate
-ghostdeploy plan --local-checkout /path/to/addons --base-sha "$BASE" --target-sha "$TARGET"
+ghostdeploy validate --config examples/staging-odoo19.yml
 ```
 
-Install from a reviewed checkout or a locally built wheel. The project has not been published to PyPI. `init --non-interactive --databases company_staging` creates a starter config without a running Odoo instance. See the [example configuration](examples/ghostdeploy.yml) for the schema and the [host setup guide](docs/installation.md) for permissions and Odoo settings. Run `ghostdeploy doctor` on the target host before attempting execution.
+Install a wheel built from a reviewed Git commit on the server. The project has not been published to PyPI. On Ubuntu, the wizard can suggest a selected service's paths, addon roots and declared database names. Enter the database allowlist explicitly. `init --non-interactive --databases training_east,training_west` works without an Odoo installation. Run `doctor` on the target host as the Odoo account.
 
 | Command | Purpose |
 | --- | --- |
 | `ghostdeploy validate --output json` | Check schema and report warnings without reading the host. |
-| `ghostdeploy doctor` | Check paths, permissions, tools and the systemd unit. |
+| `ghostdeploy doctor` | Report PASS, WARN, FAIL or SKIP for host, checkout, database and SSH prerequisites. |
 | `ghostdeploy plan --base-sha "$BASE" --target-sha "$TARGET"` | Compare exact Git revisions and identify candidate upgrades and review items. |
 | `ghostdeploy plan --inspect-databases --target-sha "$TARGET"` | Read installed module states from the configured database allowlist on the host. |
 | `ghostdeploy deploy --dry-run --target-sha "$TARGET"` | Preview without fetching, writing files, restarting or upgrading. |
 | `ghostdeploy deploy --execute --target-sha "$TARGET" --upgrade attendance` | Apply the exact revision and approve the installed `attendance` candidate under the default review policy. |
-| `ghostdeploy workflow generate` | Generate a branch-scoped GitHub Actions workflow with pinned SSH host verification and concurrency. |
+| `ghostdeploy workflow setup` | Show the SSH, pinned host key and GitHub environment checklist. |
+| `ghostdeploy workflow generate --manual-only` | Generate a branch-scoped manual workflow for the first staging run. |
 | `ghostdeploy version` | Print the installed package version. |
 
 The executor holds a per-service lock and accepts only a clean checkout and a full commit SHA that can be fast-forwarded. A deployment that fetches, including GitHub Actions, requires the current branch tip. Database inspection records the identity and installed addon versions of every allowlisted database. If `attendance` is installed in only two of three allowed databases, GhostDeploy requests its upgrade only in those two and verifies the reported version afterward. A service stop and start still affects every database the instance serves.
@@ -40,4 +41,4 @@ python -m build
 python -m twine check --strict dist/*
 ```
 
-The [test guide](docs/testing.md) explains how to run the disposable PostgreSQL and Odoo suites without a VPS. See the [Phase 2 audit](docs/phase-2-audit.md), [contributing guide](CONTRIBUTING.md) and [security reporting guidance](SECURITY.md).
+See [installation and upgrades](docs/installation.md), [first deployment](docs/first-deployment.md), [multiple databases](docs/multi-database.md), [backup and recovery](docs/operations.md), [troubleshooting](docs/troubleshooting.md) and [security](SECURITY.md). The [test and release guide](docs/testing.md) explains how to run the PostgreSQL and Odoo suites without a VPS. [Phase 3 report](docs/phase-3-report.md) · [Contributing](CONTRIBUTING.md)

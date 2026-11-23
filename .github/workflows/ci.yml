@@ -33,3 +33,10 @@ jobs:
       - run: ruff format --check .
       - run: python -m build
       - run: python -m twine check --strict dist/*
+      - name: Install and smoke-test the wheel
+        run: >-
+          python -c "from pathlib import Path; import subprocess, sys, tempfile;
+          wheel = next(Path('dist').glob('*.whl'));
+          subprocess.run([sys.executable, '-m', 'pip', 'install', '--no-deps', '--force-reinstall', str(wheel)], check=True);
+          directory = tempfile.TemporaryDirectory();
+          subprocess.run([sys.executable, '-m', 'ghostdeploy', 'version'], cwd=directory.name, check=True)"

@@ -1,5 +1,13 @@
 # Changelog
 
+## 0.3.0.dev0 (unreleased)
+
+- Add read-only Ubuntu service discovery and explicit database selection to the setup wizard.
+- Report host prerequisites with actionable PASS, WARN, FAIL and SKIP statuses and JSON output.
+- Expand plan and deployment feedback with scope, approvals, operation order, timestamps, checkpoints and artifact paths.
+- Add the SSH and GitHub setup checklist and optional manual-only staging workflows. Regenerate production workflows to adopt the explicit dispatch confirmation.
+- Add first-time setup regressions, installation and recovery guides, and an explicit Beta readiness checklist.
+
 ## 0.2.0.dev0 (unreleased)
 
 - Record and verify per-database identity, installed addon versions and explicit upgrade dependencies.

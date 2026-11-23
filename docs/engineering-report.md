@@ -1,6 +1,6 @@
 # GhostDeploy 0.1.0 engineering report
 
-This is the baseline report. The [Phase 2 engineering audit](phase-2-audit.md) and [readiness checklist](testing.md) record the changes and current evidence for 0.2.0.dev0.
+This is the baseline report. See the [Phase 2 engineering audit](phase-2-audit.md), [Phase 3 report](phase-3-report.md) and [current readiness checklist](testing.md).
 
 GhostDeploy is an installable Python CLI for managing one self-hosted Odoo service and a checkout of its custom addons. The implementation covers configuration, exact-commit planning, database-aware upgrades, backups, service control, reporting and GitHub Actions generation. Local checks support advancing to a controlled staging exercise. Production use depends on a successful staging exercise and restore drill.
 

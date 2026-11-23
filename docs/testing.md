@@ -2,7 +2,7 @@
 
 ## Support and verification
 
-| Component | Scope | Evidence for 0.2.0.dev0 |
+| Component | Scope | Evidence for 0.3.0.dev0 |
 | --- | --- | --- |
 | Ubuntu | Target platform for execution | Existing baseline Ubuntu CI and Phase 2 Linux CI configuration. New Linux-only tests still need to run. |
 | Odoo 18.0 | Targeted | Upstream CLI and version metadata reviewed. Disposable Odoo CLI fixture supplied, execution pending. |
@@ -10,7 +10,7 @@
 | PostgreSQL | Supported by native clients | PostgreSQL 17.12 on Windows: real snapshot query, dump, archive decode and restore into a separate synthetic database. |
 | Systemd | Targeted | Lifecycle, process-status and failure behavior exercised with fixtures. A real Ubuntu systemd host remains pending. |
 | Multi-database | Implemented | Three-database planning and partial failure exercised with simulated services and Git fixtures. Real Odoo upgrade tests pending. |
-| GitHub Actions and SSH | Implemented | Workflow syntax and Bash SSH stub tested. A restricted SSH key and pinned host on a real staging instance remain pending. |
+| GitHub Actions and SSH | Implemented | Workflow syntax and Bash SSH stub tested, including dispatch confirmation and SSH exit propagation. A restricted SSH key and pinned host on a real staging instance remain pending. |
 
 Ubuntu is the deployment target. Windows supports development and offline planning. Container tests exercise the stock Odoo executable and PostgreSQL without validating host systemd, sudo, SSH or an Odoo restore.
 
@@ -67,7 +67,8 @@ The harness uses a unique Compose project with an internal network, no published
 
 | Gate | Status |
 | --- | --- |
-| Hermetic tests, security regressions, Ruff and CLI smoke | Passed locally on Windows. See audit verification for counts. |
+| Hermetic tests, security regressions, Ruff and CLI smoke | Passed locally on Windows. See the [Phase 3 test counts](phase-3-report.md#verification-status). |
+| First-time setup walkthrough and docs checks | Exercised through CLI fixtures for Odoo 18 and 19, including real temporary Git clones and a controlled host simulation. A fresh Ubuntu onboarding run remains pending. |
 | Build and verify wheel and sdist | Passed locally. |
 | PostgreSQL dump and restore into a disposable database | Passed locally with PostgreSQL 17.12. |
 | Multi-database partial failure | Passed with fixtures. Actual shared-service failure exercise pending. |
@@ -79,3 +80,5 @@ The harness uses a unique Compose project with an internal network, no published
 | Recovery drill including functional login and attachment download from the restored Odoo instance | Pending disposable staging. |
 
 See the [staging procedure](operations.md#staging-validation-before-production) for the remaining service and application checks.
+
+For a public Beta, complete the pending staging gates, including a failure on the second upgrade and a functional restore with matching filestore. Verify the documented workstation, host and GitHub steps end to end on disposable infrastructure. Record both runtime versions and the recovered state before publishing anything.
