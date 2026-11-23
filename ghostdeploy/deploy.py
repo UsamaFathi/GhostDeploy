@@ -123,6 +123,10 @@ class Report:
     error: str | None = None
     recovery: str | None = None
     updated_at: str | None = None
+    completed_at: str | None = None
+    completed_phases: list[str] = field(default_factory=list)
+    project: str | None = None
+    environment: str | None = None
 
 
 class Journal:
@@ -131,9 +135,14 @@ class Journal:
         self.pending = root / f"{report.unit}.pending.json"
         self.report = report
 
-    def record(self, phase: str, *, create: bool = False) -> None:
+    def record(self, phase: str, *, create: bool = False, completed: str | None = None) -> None:
         updated_at = datetime.now(UTC).isoformat()
-        snapshot = replace(self.report, phase=phase, updated_at=updated_at)
+        phases = self.report.completed_phases.copy()
+        if completed is not None and completed not in phases:
+            phases.append(completed)
+        snapshot = replace(
+            self.report, phase=phase, updated_at=updated_at, completed_phases=phases
+        )
         try:
             write_atomic(self.pending, self.content(snapshot), replace=not create)
         except OSError:
@@ -142,6 +151,7 @@ class Journal:
             ) from None
         self.report.phase = phase
         self.report.updated_at = updated_at
+        self.report.completed_phases = phases
 
     def content(self, snapshot: Report | None = None) -> str:
         return json.dumps(asdict(snapshot or self.report), indent=2) + "\n"
@@ -160,6 +170,7 @@ class Journal:
             "unchanged" if self.report.base_sha == self.report.target_sha else "succeeded"
         )
         self.report.phase = "complete"
+        self.report.completed_at = self.report.updated_at
         self.archive()
         try:
             self.pending.unlink()
@@ -315,9 +326,11 @@ class Executor:
                 upgrades=upgrades,
                 database_oids={database: state.oid for database, state in snapshots.items()},
                 expected_versions=plan.expected_versions,
+                project=self.config.project.name,
+                environment=settings.environment,
             )
             journal = Journal(self.directory, report)
-            journal.record("prepared", create=True)
+            journal.record("prepared", create=True, completed="preflight")
             self.apply(journal, repo, plan, snapshots, backups)
             return report
 
@@ -350,7 +363,7 @@ class Executor:
                 journal.record("stopping_service")
                 self.host.service("stop")
                 self.host.require_inactive()
-                journal.record("service_stopped")
+                journal.record("service_stopped", completed="service_stopped")
                 check_databases()
             if report.upgrades:
                 report.backup_directory = str(backups.root / report.id)
@@ -361,13 +374,14 @@ class Executor:
                 ):
                     report.backups.append(record)
                     journal.record("creating_backups")
+                journal.record("creating_backups", completed="backups_verified")
             if report.base_sha != report.target_sha:
                 if plan.restart_required:
                     self.host.require_inactive()
                     check_databases()
                 journal.record("synchronizing_code")
                 repo.sync(report.base_sha, report.target_sha)
-                journal.record("code_synchronized")
+                journal.record("code_synchronized", completed="code_synchronized")
             for database, modules in report.upgrades.items():
                 self.host.require_inactive()
                 check_databases()
@@ -389,7 +403,7 @@ class Executor:
                 check_revision()
                 report.verified_databases.append(database)
                 report.in_progress_database = None
-                journal.record("database_upgraded")
+                journal.record("database_upgraded", completed=f"database_verified:{database}")
             if plan.restart_required:
                 self.host.require_inactive()
                 check_databases()
@@ -400,6 +414,7 @@ class Executor:
                 report.health = self.host.health()
                 check_databases()
                 check_revision()
+                journal.record("checking_health", completed="service_checks_verified")
         except (Exception, KeyboardInterrupt) as exc:
             self.failed(journal, exc, plan.restart_required)
             return
@@ -435,6 +450,7 @@ class Executor:
         else:
             report.recovery = "Inspect the service, Git checkout and all reported database states before returning Odoo to service."
         report.recovery += " If a migration ran, verify shared code, every affected database and the matching filestores together. Archive the pending journal only after reconciliation."
+        report.completed_at = datetime.now(UTC).isoformat()
         try:
             journal.record(report.phase)
             journal.archive()

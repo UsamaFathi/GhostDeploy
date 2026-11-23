@@ -22,6 +22,11 @@ def test_production_dispatch_requires_configured_branch(config_data):
     assert workflow["permissions"] == {}
     assert workflow["concurrency"]["cancel-in-progress"] is False
     assert workflow["jobs"]["deploy"]["environment"] == "production"
+    assert workflow["on"]["workflow_dispatch"]["inputs"]["confirm_production"]["default"] is False
+    assert (
+        workflow["jobs"]["deploy"]["steps"][0]["env"]["PRODUCTION_CONFIRMED"]
+        == "${{ inputs.confirm_production }}"
+    )
 
 
 @pytest.mark.parametrize(
@@ -38,7 +43,18 @@ def test_forced_ssh_command_rejects_unexpected_requests(config_data, payload):
         ssh_request(payload, validate(config_data))
 
 
-@pytest.mark.parametrize("mode", ["missing_secret", "bad_modules", "valid"])
+@pytest.mark.parametrize(
+    "mode",
+    [
+        "missing_secret",
+        "bad_modules",
+        "valid",
+        "remote_failure",
+        "unconfirmed_prod",
+        "push_prod",
+        "confirmed_prod",
+    ],
+)
 def test_generated_bash_with_fake_ssh(config_data, tmp_path, mode):
     if os.name == "nt":
         git = shutil.which("git")
@@ -47,13 +63,19 @@ def test_generated_bash_with_fake_ssh(config_data, tmp_path, mode):
         bash = shutil.which("bash")
     if not bash or not Path(bash).is_file():
         pytest.skip("Bash required")
+    production = mode.endswith("_prod")
+    if production:
+        config_data["deployment"]["environment"] = "production"
+        config_data["deployment"]["health_check"] = {"url": "http://127.0.0.1:8069/web/health"}
     workflow = yaml.safe_load(generate(validate(config_data)))
-    assert workflow["on"]["push"] == {"branches": ["main"]}
+    if not production:
+        assert workflow["on"]["push"] == {"branches": ["main"]}
     script = workflow["jobs"]["deploy"]["steps"][0]["run"]
-    stub = "ssh() { printf 'fake-ssh %s\\n' \"$@\"; }\n"
+    stub = 'ssh() { printf \'fake-ssh %s\\n\' "$@"; return "$STUB_EXIT"; }\n'
+    environment = "production" if production else "staging"
     env = {
         **os.environ,
-        "DEPLOY_ENVIRONMENT": "staging",
+        "DEPLOY_ENVIRONMENT": environment,
         "TARGET_SHA": TARGET,
         "SSH_KNOWN_HOSTS": "fixture-host-key",
         "SSH_USER": "odoo",
@@ -61,6 +83,9 @@ def test_generated_bash_with_fake_ssh(config_data, tmp_path, mode):
         "SSH_PRIVATE_KEY": "" if mode == "missing_secret" else "fixture-private-key",
         "UPGRADE_MODULES": "attendance;id" if mode == "bad_modules" else "attendance",
         "APPROVE_REVIEW": "true",
+        "PRODUCTION_CONFIRMED": "false" if mode == "unconfirmed_prod" else "true",
+        "GITHUB_EVENT_NAME": "push" if mode == "push_prod" else "workflow_dispatch",
+        "STUB_EXIT": "23" if mode == "remote_failure" else "0",
     }
     run = subprocess.run(
         [str(bash), "-c", stub + script],
@@ -71,10 +96,10 @@ def test_generated_bash_with_fake_ssh(config_data, tmp_path, mode):
         timeout=15,
     )
     assert "fixture-private-key" not in run.stdout + run.stderr
-    if mode != "valid":
+    if mode in {"missing_secret", "bad_modules", "unconfirmed_prod", "push_prod"}:
         assert run.returncode == 1
         assert not run.stdout
         return
-    assert run.returncode == 0, run.stderr
+    assert run.returncode == (23 if mode == "remote_failure" else 0), run.stderr
     assert "StrictHostKeyChecking=yes" in run.stdout
-    assert f"deploy staging {TARGET} attendance yes" in run.stdout
+    assert f"deploy {environment} {TARGET} attendance yes" in run.stdout

@@ -269,6 +269,8 @@ def build_plan(
         mapping = {
             database: tuple(sorted(installed[database] & candidates)) for database in databases
         }
+        if any(mapping.values()) and not config.deployment.backup.enabled:
+            blockers.add("Enable backups before upgrading any installed candidate.")
         for database, modules in mapping.items():
             for addon in modules:
                 missing = set(new[addon][1].get("depends", [])) - installed[database]

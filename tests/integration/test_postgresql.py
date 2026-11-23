@@ -14,6 +14,7 @@ import pytest
 from ghostdeploy.backup import Backups
 from ghostdeploy.config import validate
 from ghostdeploy.core import CommandError, Runner, env_without
+from ghostdeploy.diagnostics import probe_database
 from ghostdeploy.runtime import Host
 
 pytestmark = pytest.mark.skipif(
@@ -144,6 +145,7 @@ def test_pg_archive_restore_to_fresh_database(postgres, tmp_path, config_data, m
     host = Host(validate(config_data), runner)
     host.pg_settings = {key: role[key] for key in ("PGHOST", "PGPORT", "PGUSER", "PGPASSWORD")}
     host.require_database_role(source)
+    probe_database(host, source)
     state = host.snapshot_databases()[source]
     assert state.oid > 0 and state.versions == {"base": "19.0.1.0", "attendance": "19.0.2.0"}
     if os.name == "nt":
@@ -204,3 +206,5 @@ def test_pg_archive_restore_to_fresh_database(postgres, tmp_path, config_data, m
     missing_host.pg_settings = host.pg_settings
     with pytest.raises(CommandError, match=f"Inspect installed modules in {missing}"):
         missing_host.snapshot_databases()
+    with pytest.raises(CommandError, match=f"Connect to allowlisted database {missing}"):
+        probe_database(missing_host, missing)

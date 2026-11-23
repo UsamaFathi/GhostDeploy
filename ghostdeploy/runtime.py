@@ -170,11 +170,11 @@ class Host:
                 findings.append(Finding(label, True, location))
             except GhostError as exc:
                 findings.append(Finding(label, False, str(exc)))
-        for path in (self.config.deployment.state_path, self.config.deployment.backup.path):
-            if (
-                path == self.config.deployment.backup.path
-                and not self.config.deployment.backup.enabled
-            ):
+        for label, path in (
+            ("State directory", self.config.deployment.state_path),
+            ("Backup directory", self.config.deployment.backup.path),
+        ):
+            if label == "Backup directory" and not self.config.deployment.backup.enabled:
                 continue
             try:
                 if not ubuntu:
@@ -182,9 +182,9 @@ class Host:
                         "Private directory permissions are checked on the Ubuntu deployment host."
                     )
                 private_directory(Path(path))
-                findings.append(Finding("Private storage", True, path))
+                findings.append(Finding(label, True, path))
             except GhostError as exc:
-                findings.append(Finding("Private storage", False, str(exc)))
+                findings.append(Finding(label, False, str(exc)))
         try:
             self.systemd()
             findings.append(Finding("Service", True, self.odoo.unit))
@@ -471,6 +471,9 @@ class Host:
             )
         self.service_process(state)
         self.health()
+        self.require_service_permissions()
+
+    def require_service_permissions(self) -> None:
         for action in ("stop", "start"):
             self.runner.run(
                 [SUDO, "-n", "-l", "--", SYSTEMCTL, action, self.odoo.unit],

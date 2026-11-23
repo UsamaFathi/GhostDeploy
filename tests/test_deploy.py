@@ -243,15 +243,31 @@ def test_operational_lifecycle(
     assert journal.pending.exists() is (failure is not None)
     assert fake.inspected == set(INSTALLED)
     assert persisted["status"] == ("succeeded" if failure is None else "failed")
+    assert datetime.fromisoformat(persisted["completed_at"]) >= datetime.fromisoformat(
+        persisted["started_at"]
+    )
+    assert [
+        step for step in persisted["completed_phases"] if step.startswith("database_verified:")
+    ] == [f"database_verified:{name}" for name in persisted["verified_databases"]]
+    assert ("service_checks_verified" in persisted["completed_phases"]) is (failure is None)
     assert "secret internal details" not in json.dumps(persisted)
     assert persisted["verified_databases"] == ([] if failure == "no new version" else completed)
     if phase == "upgrading_database":
         assert persisted["in_progress_database"] == ("company_b" if completed else "company_a")
     if failure in {"Back up company_b", "interrupted backup"}:
         assert [item["database"] for item in persisted["backups"]] == ["company_a"]
+        assert "backups_verified" not in persisted["completed_phases"]
         assert (backup / "test_id" / "company_b.dump.partial").is_file()
     if failure is None:
         assert persisted["status"] == "succeeded"
+        assert persisted["completed_phases"] == [
+            "service_stopped",
+            "backups_verified",
+            "code_synchronized",
+            "database_verified:company_a",
+            "database_verified:company_b",
+            "service_checks_verified",
+        ]
         first, second = persisted["backups"]
         assert second["filestore"]["status"] == "absent_at_snapshot"
         assert first["test_restore"] == "not_performed"

@@ -4,6 +4,7 @@ import os
 import re
 from dataclasses import asdict
 from pathlib import Path
+from typing import TypedDict
 
 import yaml
 
@@ -14,7 +15,13 @@ from ghostdeploy.runtime import Host
 
 SECRETS = ("SSH_HOST", "SSH_USER", "SSH_PRIVATE_KEY", "SSH_KNOWN_HOSTS")
 
-SSH_SCRIPT = r"""set -euo pipefail
+SSH_SCRIPT = r"""set +x
+set -euo pipefail
+if [[ "$DEPLOY_ENVIRONMENT" == production ]] &&
+   [[ "${GITHUB_EVENT_NAME:-}" != workflow_dispatch || "${PRODUCTION_CONFIRMED:-}" != true ]]; then
+  echo 'Production requires a manual dispatch with explicit confirmation.' >&2
+  exit 1
+fi
 if [[ -z "$SSH_PRIVATE_KEY" || -z "$SSH_KNOWN_HOSTS" ]]; then
   echo 'Configure the SSH_PRIVATE_KEY and SSH_KNOWN_HOSTS environment secrets.' >&2
   exit 1
@@ -61,7 +68,7 @@ class WorkflowDumper(yaml.SafeDumper):
 WorkflowDumper.add_representer(str, WorkflowDumper.represent_str)
 
 
-def generate(config: Config) -> str:
+def generate(config: Config, *, manual_only: bool = False) -> str:
     environment = config.deployment.environment
     branch = config.repository.branch
     triggers = {
@@ -80,7 +87,14 @@ def generate(config: Config) -> str:
             }
         }
     }
-    if environment != "production":
+    if environment == "production":
+        triggers["workflow_dispatch"]["inputs"]["confirm_production"] = {
+            "description": "Confirm this production deployment",
+            "type": "boolean",
+            "required": True,
+            "default": False,
+        }
+    elif not manual_only:
         triggers["push"] = {"branches": [branch]}
     workflow = {
         "name": f"Deploy {config.project.name} ({environment})",
@@ -105,6 +119,11 @@ def generate(config: Config) -> str:
                             "DEPLOY_ENVIRONMENT": environment,
                             "UPGRADE_MODULES": "${{ inputs.upgrade_modules }}",
                             "APPROVE_REVIEW": "${{ inputs.approve_review }}",
+                            **(
+                                {"PRODUCTION_CONFIRMED": "${{ inputs.confirm_production }}"}
+                                if environment == "production"
+                                else {}
+                            ),
                             **{secret: "${{ secrets." + secret + " }}" for secret in SECRETS},
                         },
                         "run": SSH_SCRIPT,
@@ -114,6 +133,35 @@ def generate(config: Config) -> str:
         },
     }
     return yaml.dump(workflow, Dumper=WorkflowDumper, sort_keys=False)
+
+
+class SetupGuide(TypedDict):
+    environment: str
+    branch: str
+    secrets: tuple[str, ...]
+    authorized_key_example: str
+    steps: list[str]
+
+
+def setup_instructions(config: Config) -> SetupGuide:
+    environment = config.deployment.environment
+    return {
+        "environment": environment,
+        "branch": config.repository.branch,
+        "secrets": SECRETS,
+        "authorized_key_example": (
+            'restrict,command="/opt/ghostdeploy/venv/bin/ghostdeploy-ssh --config /etc/ghostdeploy.yml" '
+            f"ssh-ed25519 <PUBLIC_KEY_BODY> ghostdeploy-{environment}"
+        ),
+        "steps": [
+            f"On the VPS, install the reviewed wheel in /opt/ghostdeploy/venv and run doctor as {config.odoo.service_user}. Use an admin-controlled config and the canonical systemd unit.",
+            "On your workstation, create a dedicated Ed25519 SSH key for this environment. Keep the private key out of the repository.",
+            f"On the VPS, install only its public key with the restriction below for {config.odoo.service_user}. Adjust the two absolute paths if needed.",
+            "Pin the VPS host key from a trusted channel. Verify GitHub's host key separately if the VPS fetches over SSH.",
+            f"On GitHub, configure the {environment} environment for the branch {config.repository.branch}. Add these environment secrets: {', '.join(SECRETS)}. Use protected branches and production reviewers where available.",
+            "Generate the workflow in the addons repo with --manual-only for the first staging run. Review the exact commit and complete the disposable staging checklist before authorizing execution.",
+        ],
+    }
 
 
 def ssh_request(request: str, config: Config) -> tuple[str, list[str], bool]:
