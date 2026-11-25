@@ -327,6 +327,7 @@ def scenario(
     fail_second: bool,
     browser: bool = False,
     native: Path | None = None,
+    recovery: Cluster | None = None,
 ) -> None:
     started = monotonic()
     root.mkdir()
@@ -404,7 +405,7 @@ def scenario(
                     "failed",
                     dbs[1],
                 )
-                assert report["verified_databases"] == dbs[:1]
+                assert report["verified_databases"] == report["upgraded_databases"] == dbs[:1]
                 assert report["health"] is None
                 assert (root / "host" / "odoo.log").read_text().count(FAILURE) >= 1
                 assert json.loads(pending.read_text(encoding="utf-8")) == archive
@@ -418,7 +419,11 @@ def scenario(
                     app_record(host, dbs[0], attachment=False)["release_note"] == "schema verified"
                 )
                 if native:
-                    restore(root, checkout, cluster, series, report, expected, password, native)
+                    assert recovery is not None and recovery.connection != cluster.connection
+                    restore(root, checkout, recovery, series, report, expected, password, native)
+                    assert json.loads(pending.read_text(encoding="utf-8")) == archive
+                    assert repo.clean_head() == target
+                    host.require_inactive()
             else:
                 assert (exit_code, report["status"], report["verified_databases"]) == (
                     0,
@@ -445,7 +450,8 @@ def scenario(
                     browser_check.verify(
                         host, dbs[0], password, revision=1, content=b"changed after backup"
                     )
-                restore(root, checkout, cluster, series, report, expected, password, native)
+                if not native:
+                    restore(root, checkout, cluster, series, report, expected, password)
             print(
                 f"PASS Odoo {series} {'intentional partial failure' if fail_second else 'executor upgrade'}: "
                 f"3 allowlisted databases, CLI exit={exit_code}, {monotonic() - started:.1f}s",
@@ -484,14 +490,28 @@ def combined(root: Path, series: str) -> None:
     assert root.parent == Path("/var/lib") and root.stat().st_uid == 0
     work = root / "work"
     assert work.stat().st_uid == os.geteuid() != 0
-    connection = json.loads((work / "connection.json").read_text())
-    cluster = Cluster(Runner(), connection["token"], port=connection["port"])
+    connections = json.loads((work / "connection.json").read_text())
+    assert connections["live"]["port"] != connections["recovery"]["port"]
+    clusters = {
+        name: Cluster(Runner(), connection["token"], port=connection["port"])
+        for name, connection in connections.items()
+    }
     binary = root / "odoo"
     version = Runner().run([sys.executable, str(binary), "--version"], label="Odoo version")
     assert series.encode() in version
     print(version.decode().strip(), flush=True)
-    scenario(work / "success", cluster, series, fail_second=False, browser=True, native=root)
-    scenario(work / "failure", cluster, series, fail_second=True, browser=True, native=root)
+    scenario(
+        work / "success", clusters["live"], series, fail_second=False, browser=True, native=root
+    )
+    scenario(
+        work / "failure",
+        clusters["live"],
+        series,
+        fail_second=True,
+        browser=True,
+        native=root,
+        recovery=clusters["recovery"],
+    )
 
 
 if __name__ == "__main__":

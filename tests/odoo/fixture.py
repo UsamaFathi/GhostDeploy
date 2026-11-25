@@ -237,7 +237,6 @@ def unit_name(native: Path, runtime: Path) -> str:
     relative = runtime.relative_to(native / "work")
     if relative.parts not in {
         ("success", "host"),
-        ("success", "restored-runtime"),
         ("failure", "host"),
         ("failure", "restored-runtime"),
     }:

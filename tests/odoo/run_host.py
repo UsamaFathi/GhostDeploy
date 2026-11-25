@@ -71,6 +71,8 @@ def stage_runtime(root: Path, dependencies: Path, series: str) -> None:
             "/usr",
             "--dereference",
             "--hard-dereference",
+            # These optional PDF font links are dangling in both pinned images.
+            "--exclude=lib/python3/dist-packages/reportlab/fonts/DejaVu*.ttf",
             "-cf",
             "-",
             "bin/odoo",
@@ -122,9 +124,7 @@ def stop_postgres(pg_ctl: tuple, data: Path) -> None:
         run(*pg_ctl, "-m", "fast", "-w", "stop")
 
 
-def postgres(root: Path, cleanup: ExitStack, bindir: Path) -> tuple[int, str]:
-    name = root.name + "pg"
-    home = root / "db"
+def postgres(home: Path, name: str, cleanup: ExitStack, bindir: Path) -> dict[str, str | int]:
     account(name, home, cleanup)
     sockets = home / "sockets"
     own(sockets, name)
@@ -195,7 +195,7 @@ def postgres(root: Path, cleanup: ExitStack, bindir: Path) -> tuple[int, str]:
         raise RuntimeError("PostgreSQL did not start from the fixture cluster.")
     run(*psql, "-d", "postgres", "-c", "CREATE DATABASE ghostdeploy_fixture", env=env)
     run(*psql, "-d", "ghostdeploy_fixture", "-f", Path(__file__).with_name("fixture.sql"), env=env)
-    return port, token
+    return {"port": port, "token": token}
 
 
 def remove_unit(unit: str, path: Path) -> None:
@@ -209,33 +209,36 @@ def remove_unit(unit: str, path: Path) -> None:
 def units(root: Path, cleanup: ExitStack) -> None:
     allowed = []
     cleanup.callback(run, SYSTEMCTL, "daemon-reload")
-    for scenario in ("success", "failure"):
-        for runtime in ("host", "restored-runtime"):
-            unit = f"{root.name}-{scenario}-{runtime}.service"
-            state = run(
-                SYSTEMCTL,
-                "show",
-                "--property=LoadState",
-                "--value",
-                "--",
-                unit,
-                capture_output=True,
-                check=False,
+    for scenario, runtime in (
+        ("success", "host"),
+        ("failure", "host"),
+        ("failure", "restored-runtime"),
+    ):
+        unit = f"{root.name}-{scenario}-{runtime}.service"
+        state = run(
+            SYSTEMCTL,
+            "show",
+            "--property=LoadState",
+            "--value",
+            "--",
+            unit,
+            capture_output=True,
+            check=False,
+        )
+        if state.stdout.strip() != b"not-found":
+            raise RuntimeError(f"The generated fixture unit is already in use: {unit}.")
+        path = Path("/run/systemd/system") / unit
+        with path.open("x") as definition:
+            cleanup.callback(remove_unit, unit, path)
+            definition.write(
+                "[Service]\nType=exec\n"
+                f"User={root.name}\nWorkingDirectory={root}/work\n"
+                f"Environment=LD_LIBRARY_PATH={root}/native-libs\n"
+                f"ExecStart={root}/venv/bin/python {root}/odoo -c {root}/work/{scenario}/{runtime}/odoo.conf\n"
+                "KillMode=control-group\nSendSIGKILL=yes\nTimeoutStopSec=20s\n"
+                "NoNewPrivileges=true\nIPAddressDeny=any\nIPAddressAllow=localhost\n"
             )
-            if state.stdout.strip() != b"not-found":
-                raise RuntimeError(f"The generated fixture unit is already in use: {unit}.")
-            path = Path("/run/systemd/system") / unit
-            with path.open("x") as definition:
-                cleanup.callback(remove_unit, unit, path)
-                definition.write(
-                    "[Service]\nType=exec\n"
-                    f"User={root.name}\nWorkingDirectory={root}/work\n"
-                    f"Environment=LD_LIBRARY_PATH={root}/native-libs\n"
-                    f"ExecStart={root}/venv/bin/python {root}/odoo -c {root}/work/{scenario}/{runtime}/odoo.conf\n"
-                    "KillMode=control-group\nSendSIGKILL=yes\nTimeoutStopSec=20s\n"
-                    "NoNewPrivileges=true\nIPAddressDeny=any\nIPAddressAllow=localhost\n"
-                )
-            allowed.extend(f"{SYSTEMCTL} {action} {unit}" for action in ("start", "stop"))
+        allowed.extend(f"{SYSTEMCTL} {action} {unit}" for action in ("start", "stop"))
     sudoers = Path("/etc/sudoers.d") / root.name
     with sudoers.open("x") as rule:
         cleanup.callback(sudoers.unlink)
@@ -302,13 +305,16 @@ def main(dependencies: Path, series: str) -> int:
         work = root / "work"
         own(work, root.name)
         stage_runtime(root, dependencies, series)
-        port, token = postgres(root, cleanup, bindir)
+        databases = {
+            "live": postgres(root / "db", root.name + "pg", cleanup, bindir),
+            "recovery": postgres(root / "recovery-db", root.name + "rs", cleanup, bindir),
+        }
         connection = work / "connection.json"
         with connection.open("x") as stream:
             os.fchmod(stream.fileno(), 0o600)
             identity = pwd.getpwnam(root.name)
             os.fchown(stream.fileno(), identity.pw_uid, identity.pw_gid)
-            json.dump({"port": port, "token": token}, stream)
+            json.dump(databases, stream)
         units(root, cleanup)
         test_start = monotonic()
         print(f"Combined staging setup completed in {test_start - start:.1f}s", flush=True)
