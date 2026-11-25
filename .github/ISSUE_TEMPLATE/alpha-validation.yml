@@ -1,0 +1,48 @@
+name: Alpha staging validation
+description: Share sanitized results from a dedicated disposable GhostDeploy staging test.
+title: "[Alpha validation] "
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Use synthetic data and share only minimal, redacted evidence. Do not attach credentials,
+        keys, database dumps, customer data, complete logs or configuration files. Report
+        suspected vulnerabilities privately using SECURITY.md.
+  - type: input
+    id: ghostdeploy
+    attributes:
+      label: GhostDeploy version and tested commit
+    validations:
+      required: true
+  - type: input
+    id: platform
+    attributes:
+      label: Odoo, PostgreSQL and Ubuntu versions
+    validations:
+      required: true
+  - type: textarea
+    id: deployment
+    attributes:
+      label: Deployment result
+      description: Include runner and host type, dispatch SHA, successes and failures, approval and branch checks, or pending checks.
+    validations:
+      required: true
+  - type: textarea
+    id: recovery
+    attributes:
+      label: Recovery result
+      description: State whether the failed retry was blocked and whether restored login, record and attachment verification passed.
+    validations:
+      required: true
+  - type: textarea
+    id: reproducer
+    attributes:
+      label: Reproduction steps
+      description: Use synthetic aliases and link to Actions runs only if their logs are safe to share.
+    validations:
+      required: true
+  - type: textarea
+    id: errors
+    attributes:
+      label: Sanitized error messages
+      description: Redact identities, hostnames, private paths and values. Share only necessary excerpts.

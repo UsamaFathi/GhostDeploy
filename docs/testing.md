@@ -99,4 +99,4 @@ Use a verified local Docker daemon. Image builds and database installs may take 
 
 See the [staging procedure](operations.md#staging-validation-before-production) for the remaining service and application checks.
 
-Keep GhostDeploy Alpha. The next staging gate uses the generated GitHub workflow and an independently reachable, explicitly authorized disposable host to verify environment approval, branch restrictions, SSH policy, and remote failure reporting end to end.
+Keep GhostDeploy Alpha. Use the [independent Alpha staging kit](../validation/staging/README.md) on an explicitly authorized disposable host to verify environment approval, branch restrictions, SSH policy, and remote failure reporting with the generated workflow. See the [Phase 3.8 report](phase-38-external-validation.md) for the current gate status.

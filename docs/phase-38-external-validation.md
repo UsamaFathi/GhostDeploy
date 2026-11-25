@@ -1,0 +1,30 @@
+# Phase 3.8 external validation and Alpha preparation
+
+GhostDeploy remains **Alpha**, version `0.3.0.dev0`. The fetched `main` baseline was `8b53a1326a4aab3ce482b9db3426302b0b0bb61b`. The proposed public Alpha version is `0.3.0a1`, subject to maintainer approval. [Draft release notes and checklist](alpha-release.md)
+
+## Staging kit
+
+The [independent staging guide](../validation/staging/README.md) covers the baseline addon, the two target commits, synthetic data, the dedicated service and local PostgreSQL cluster, scoped sudo, the restricted key, dispatch and evidence submission. It uses the existing addon fixture and workflow generator. The kit is included in the source distribution.
+
+Root issues an expiring, host-bound authorization for the exact staging and Odoo configs. The kit accepts only the three named synthetic databases, a staging environment, an Odoo listener and PostgreSQL on loopback, and administrator-controlled config paths. The forced-command gate checks that authorization and delegates to the existing GhostDeploy SSH entry point. Local preflight and evidence checks are read-only. The verifier checks the reviewed SHA, deployment ID, backup sizes and hashes, and the completed or uncertain journal state. It keeps the external gate pending. The separate restore and data checks are independent operator steps.
+
+The [sanitized report template](../validation/staging/report-template.md) and GitHub issue form request version, platform and outcome evidence. The kit's [cleanup procedure](../validation/staging/README.md#restore-report-and-clean-up) uses operator revocation and disposal for the authorized VM.
+
+## Security and dependency review
+
+| Area | Finding and verification |
+| --- | --- |
+| Remote exit status | The SSH runner previously treated every status other than `failed` as success. It now returns zero only for `succeeded` or `unchanged` with phase `complete`. Regression tests cover incomplete, failed and successful records. |
+| Workflow and remote authorization | The generator uses structured inputs, exact event SHA, a branch condition, environment-scoped secrets, concurrency and strict host-key checking. The runner unsets key variables after writing private temporary files. CI actions use full commit pins and read-only contents access. The release design separates build from any future publication privileges. |
+| Trusted inputs and execution | Existing strict config, argument arrays, exact Git revision verification and branch-tip checks remain in force. The deploy account and reviewed addon code are trusted. The staging gate checks root-controlled paths and uses an isolated Python invocation. A copied or expired authorization cannot admit a new run. |
+| Sudo, allowlists and storage | Host preflight checks service identity and required sudo commands. The kit makes read-only denial probes and requires the precise synthetic allowlist. Existing private backup and state checks, file ownership controls, per-unit locking and durable pending journals remain in force. The verifier follows only the named private artifact paths and checks recorded hashes. |
+| Production confirmation | The generated production workflow requires manual dispatch and explicit confirmation. An already authorized forced-command key is a host-side trust boundary, separate from GitHub reviewer enforcement. The kit refuses production configurations and uses a distinct staging identity and authorization. |
+| Python dependencies | `pip-audit 2.10.1` queried the advisory service for 43 exact installed package versions from the runtime and development environment. It reported zero known advisories and no skipped packages. This covers the audited snapshot. Deployment hosts and later resolved dependency sets need their own audit. |
+
+## Evidence and remaining gates
+
+The existing Odoo 18 and 19 combined runs cover real systemd, the allowlist, PostgreSQL backup and restore, an intentional second-database failure, and authenticated browser recovery. The Phase 3.5 and 3.6 reports retain locking, scoped sudo and restricted OpenSSH evidence. [Phase 3.5](phase-35-integration-report.md) · [Phase 3.6](phase-36-beta-validation.md) · [Phase 3.7](phase-37-combined-staging.md)
+
+**External deployment remains PENDING.** This phase had no independently reachable, explicitly authorized staging host. GitHub environment approval, branch enforcement, successful real dispatch and remote failure propagation still need their independent combined run. An isolated local self-hosted runner can rehearse those operator steps. Its results have a separate evidence scope.
+
+For the next milestone, follow the [independent staging guide](../validation/staging/README.md) through a successful dispatch, intentional failure, blocked retry and independent authenticated restore. Submit the minimal evidence through the Alpha issue form. Maintainer approval of the release version and authorization to publish remain separate gates.

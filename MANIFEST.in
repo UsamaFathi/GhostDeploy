@@ -4,5 +4,6 @@ recursive-include examples *.yml
 recursive-include tests *.py
 recursive-include tests/odoo *.yml *.sql Dockerfile
 recursive-include tests/ssh Dockerfile
+recursive-include validation *.py *.md *.yml
 include .dockerignore
 include .github/workflows/integration.yml

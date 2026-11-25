@@ -4,6 +4,8 @@ GhostDeploy is an MIT-licensed deployment toolkit for developers who maintain se
 
 GhostDeploy 0.3.0.dev0 is **alpha**. It targets Odoo 18.0 and 19.0 on Ubuntu with one systemd service, PostgreSQL and a GitHub repository of custom addons. Start with the [Quick start](docs/quick-start.md) for workstation, Odoo host and GitHub steps. The [support and verification matrix](docs/testing.md#support-and-verification) lists the checks that have run and the staging gates that remain.
 
+Independent Odoo developers can evaluate GhostDeploy on a dedicated disposable VM using the [Alpha staging kit](validation/staging/README.md). Hosted validation has exercised real Odoo 18 and 19 upgrades, systemd restarts, partial failure, and authenticated restore. The deployment from GitHub Actions to an independently reachable restricted SSH host remains pending. [Combined staging evidence](docs/phase-37-combined-staging.md) · [Draft Alpha release checklist](docs/alpha-release.md)
+
 ```sh
 python3 -m venv .venv
 . .venv/bin/activate

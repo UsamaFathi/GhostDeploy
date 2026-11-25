@@ -11,7 +11,12 @@ HEADING = re.compile(r"^#{1,6} (.+)$", re.MULTILINE)
 LINK = re.compile(r"\]\(([^\s)]+)\)")
 
 
-@pytest.mark.parametrize("document", sorted([*ROOT.glob("*.md"), *(ROOT / "docs").glob("*.md")]))
+@pytest.mark.parametrize(
+    "document",
+    sorted(
+        [*ROOT.glob("*.md"), *(ROOT / "docs").glob("*.md"), *(ROOT / "validation").rglob("*.md")]
+    ),
+)
 def test_local_documentation_links(document):
     for link in LINK.findall(document.read_text(encoding="utf-8")):
         parts = urlsplit(link)

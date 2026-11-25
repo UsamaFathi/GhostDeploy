@@ -1,0 +1,29 @@
+schema_version: 1
+project:
+  name: ghostdeploy-alpha
+odoo:
+  version: "19.0"
+  service: ghostdeploy-alpha-odoo
+  service_user: ghostdeploy_alpha
+  executable: /opt/odoo/server/odoo-bin
+  interpreter: /opt/odoo/venv/bin/python
+  config_file: /etc/ghostdeploy-alpha/odoo.conf
+  addons_path:
+    - /srv/ghostdeploy-alpha/addons
+repository:
+  branch: main
+  checkout_path: /srv/ghostdeploy-alpha/addons
+deployment:
+  environment: staging
+  databases:
+    - ghostdeploy_alpha_a
+    - ghostdeploy_alpha_b
+    - ghostdeploy_alpha_c
+  upgrade_policy: manual_review
+  state_path: /var/lib/ghostdeploy-alpha/state
+  backup:
+    enabled: true
+    path: /var/lib/ghostdeploy-alpha/backups
+  health_check:
+    enabled: true
+    url: http://127.0.0.1:8069/web/health

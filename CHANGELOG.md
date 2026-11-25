@@ -2,6 +2,8 @@
 
 ## 0.3.0.dev0 (unreleased)
 
+- Add an external Alpha staging kit, sanitized validation issue form, and draft release procedure.
+- Return a failing SSH exit status for incomplete or unsuccessful deployment reports.
 - Add hosted combined staging checks with native Odoo, private PostgreSQL clusters, real systemd and authenticated recovery.
 - Run hosted Odoo 18 browser validation with pinned headless Chromium and report skipped systemd assertions separately from a pass.
 - Add authenticated browser checks for upgrade and restore in the Odoo 18 and 19 fixtures.
