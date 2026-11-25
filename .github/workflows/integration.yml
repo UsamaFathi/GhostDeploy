@@ -7,7 +7,7 @@ on:
       suite:
         description: Local fixture suite to run on the hosted runner
         type: choice
-        options: [postgresql, odoo18, odoo19, browser18, browser19, ssh, systemd]
+        options: [postgresql, odoo18, odoo19, browser18, browser19, ssh, systemd, combined19]
         required: true
 
 permissions:
@@ -15,7 +15,7 @@ permissions:
 
 jobs:
   disposable:
-    if: inputs.suite != 'systemd'
+    if: inputs.suite != 'systemd' && inputs.suite != 'combined19' && inputs.suite != 'browser18'
     runs-on: ubuntu-latest
     timeout-minutes: 25
     env:
@@ -43,8 +43,6 @@ jobs:
         run: python tests/odoo/run.py 18.0
       - if: inputs.suite == 'odoo19'
         run: python tests/odoo/run.py 19.0
-      - if: inputs.suite == 'browser18'
-        run: python tests/odoo/run.py 18.0 --browser
       - if: inputs.suite == 'browser19'
         run: python tests/odoo/run.py 19.0 --browser
       - name: Build isolated OpenSSH image
@@ -61,10 +59,22 @@ jobs:
         run: |
           docker container rm -f "$SSH_FIXTURE_ID" >/dev/null 2>&1 || true
           docker image rm "$SSH_FIXTURE_ID" >/dev/null 2>&1 || true
-  systemd:
-    if: inputs.suite == 'systemd'
+      - name: Report disposable result
+        if: always()
+        env:
+          SUITE: ${{ inputs.suite }}
+          JOB_STATUS: ${{ job.status }}
+        run: |
+          case "$JOB_STATUS" in
+            success) result=PASS ;;
+            failure) result=FAIL ;;
+            *) result=PENDING ;;
+          esac
+          echo "$SUITE: $result" | tee -a "$GITHUB_STEP_SUMMARY"
+  hosted-systemd:
+    if: inputs.suite == 'systemd' || inputs.suite == 'combined19' || inputs.suite == 'browser18'
     runs-on: ubuntu-24.04
-    timeout-minutes: 6
+    timeout-minutes: 22
     steps:
       - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
         with:
@@ -72,23 +82,57 @@ jobs:
       - uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065b # v5.6.0
         with:
           python-version: '3.12'
-      - name: Test one disposable systemd service and sudo rule
+      - name: Test real systemd on an owned fixture
+        id: assertions
         shell: bash
+        env:
+          SUITE: ${{ inputs.suite }}
         run: |
           if [[ "${RUNNER_ENVIRONMENT:-}" != github-hosted ]] ||
              [[ "$(cat /proc/1/comm)" != systemd ]] ||
              ! sudo -n /usr/bin/true; then
-            echo 'SKIP: a disposable runner with systemd PID 1 and provisioning sudo is required.' | tee -a "$GITHUB_STEP_SUMMARY"
-            exit 0
+            echo 'result=SKIPPED' >> "$GITHUB_OUTPUT"
+            echo 'SKIPPED: a disposable runner with systemd PID 1 and provisioning sudo is required.'
+            exit 77
           fi
           dependencies=$(mktemp -d "$RUNNER_TEMP/ghostdeploy-systemd.XXXXXXXX")
           trap 'rm -rf -- "$dependencies"' EXIT
-          python -m pip install --target "$dependencies" .
+          setup_at=$SECONDS
           result=0
-          sudo -n env GITHUB_ACTIONS="$GITHUB_ACTIONS" RUNNER_ENVIRONMENT="$RUNNER_ENVIRONMENT" \
-            /usr/bin/python3 tests/systemd/run.py "$dependencies" || result=$?
-          if [[ "$result" == 77 ]]; then
-            echo 'SKIP: the disposable systemd fixture could not run on this runner.' | tee -a "$GITHUB_STEP_SUMMARY"
-            exit 0
+          if [[ "$SUITE" == systemd ]]; then
+            python -m pip install --target "$dependencies" .
+            echo "Python dependencies provisioned in $((SECONDS - setup_at))s"
+            sudo -n env GITHUB_ACTIONS="$GITHUB_ACTIONS" RUNNER_ENVIRONMENT="$RUNNER_ENVIRONMENT" \
+              /usr/bin/python3 tests/systemd/run.py "$dependencies" || result=$?
+          else
+            python -m pip install --target "$dependencies" . playwright==1.64.1
+            echo "Python dependencies provisioned in $((SECONDS - setup_at))s"
+            version=19.0
+            [[ "$SUITE" == browser18 ]] && version=18.0
+            sudo -n env GITHUB_ACTIONS="$GITHUB_ACTIONS" RUNNER_ENVIRONMENT="$RUNNER_ENVIRONMENT" \
+              /usr/bin/python3 tests/odoo/run_host.py "$dependencies" "$version" || result=$?
           fi
+          case "$result" in
+            0) outcome=PASS ;;
+            77) outcome=SKIPPED ;;
+            *) outcome=FAIL ;;
+          esac
+          echo "result=$outcome" >> "$GITHUB_OUTPUT"
           exit "$result"
+      - name: Report requested systemd gate
+        if: always()
+        env:
+          SUITE: ${{ inputs.suite }}
+          RESULT: ${{ steps.assertions.outputs.result }}
+          JOB_STATUS: ${{ job.status }}
+        run: |
+          if [[ -z "$RESULT" ]]; then
+            case "$JOB_STATUS" in
+              failure) RESULT=FAIL ;;
+              *) RESULT=PENDING ;;
+            esac
+          fi
+          echo "$SUITE: $RESULT" | tee -a "$GITHUB_STEP_SUMMARY"
+          if [[ "$RESULT" == SKIPPED ]]; then
+            echo 'The required assertions did not run. The release gate remains PENDING.' | tee -a "$GITHUB_STEP_SUMMARY"
+          fi

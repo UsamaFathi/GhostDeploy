@@ -20,10 +20,10 @@ ATTACHMENT = b"GhostDeploy recovery fixture\x00\x01\xff"
 class Cluster:
     """Prove cluster ownership before any setup SQL."""
 
-    def __init__(self, runner: Runner, token: str):
+    def __init__(self, runner: Runner, token: str, *, port: int | None = None):
         if (
             not re.fullmatch(r"[0-9a-f]{32}", token)
-            or not Path("/fixture/.disposable-odoo-image").is_file()
+            or (port is None and not Path("/fixture/.disposable-odoo-image").is_file())
             or os.geteuid() == 0
         ):
             raise GhostError("Use the disposable Compose runner as the Odoo account.")
@@ -32,8 +32,8 @@ class Cluster:
         self.created: set[str] = set()
         self.connection = {
             **env_without("PG"),
-            "PGHOST": "database",
-            "PGPORT": "5432",
+            "PGHOST": "database" if port is None else "127.0.0.1",
+            "PGPORT": str(5432 if port is None else port),
             "PGCONNECT_TIMEOUT": "5",
         }
         self.connection.pop("GHOSTDEPLOY_FIXTURE_TOKEN", None)
@@ -106,8 +106,30 @@ class TracedRunner(Runner):
         return super().run(args, label=label, **kwargs)
 
 
-class ProcessHost(Host):
-    """Replace systemd and sudo with a real private child process in the container."""
+class FixtureHost(Host):
+    """Start and stop one owned Odoo instance for the duration of a check."""
+
+    def odoo_env(self) -> dict[str, str]:
+        env = super().odoo_env()
+        env.pop("GHOSTDEPLOY_FIXTURE_TOKEN", None)
+        return env
+
+    @contextmanager
+    def running(self):
+        try:
+            self.service("start")
+            self.health()
+            yield self
+        finally:
+            self.stop()
+
+    def stop(self) -> None:
+        self.service("stop")
+        self.require_inactive()
+
+
+class ProcessHost(FixtureHost):
+    """Run a private Odoo child in container tests without systemd."""
 
     def __init__(self, config: Config, runner: TracedRunner):
         super().__init__(config, runner)
@@ -140,11 +162,6 @@ class ProcessHost(Host):
         else:
             raise AssertionError(f"Unexpected fixture service operation: {action}")
 
-    def odoo_env(self) -> dict[str, str]:
-        env = super().odoo_env()
-        env.pop("GHOSTDEPLOY_FIXTURE_TOKEN", None)
-        return env
-
     def stop(self) -> None:
         if self.process is not None and self.process.poll() is None:
             self.process.terminate()
@@ -155,19 +172,16 @@ class ProcessHost(Host):
                 self.process.wait(timeout=10)
                 raise
 
-    @contextmanager
-    def running(self):
-        try:
-            self.service("start")
-            self.health()
-            yield self
-        finally:
-            self.stop()
-
 
 def make_host(
-    root: Path, checkout: Path, cluster: Cluster, series: str, dbs: list[str]
-) -> ProcessHost:
+    root: Path,
+    checkout: Path,
+    cluster: Cluster,
+    series: str,
+    dbs: list[str],
+    *,
+    native: Path | None = None,
+) -> FixtureHost:
     root.mkdir()
     for name in ("data", "backups", "state"):
         (root / name).mkdir(mode=0o700)
@@ -181,7 +195,8 @@ def make_host(
     config_file.write_text(
         "[options]\n"
         f"addons_path = {checkout}\ndata_dir = {root / 'data'}\nlogfile = {root / 'odoo.log'}\n"
-        f"db_host = database\ndb_port = 5432\ndb_user = ghost_fixture_odoo\ndb_password = {cluster.password}\n"
+        f"db_host = {cluster.connection['PGHOST']}\ndb_port = {cluster.connection['PGPORT']}\n"
+        f"db_user = ghost_fixture_odoo\ndb_password = {cluster.password}\n"
         f"db_name = {','.join(dbs)}\nhttp_interface = 127.0.0.1\nhttp_port = {port}\n"
         "list_db = False\nworkers = 0\nmax_cron_threads = 0\n",
         encoding="utf-8",
@@ -192,9 +207,10 @@ def make_host(
             "project": {"name": "odoo_fixture"},
             "odoo": {
                 "version": series,
-                "service": f"fixture-{uuid4().hex[:12]}",
-                "service_user": "odoo",
-                "executable": "/usr/bin/odoo",
+                "service": unit_name(native, root) if native else f"fixture-{uuid4().hex[:12]}",
+                "service_user": native.name if native else "odoo",
+                "executable": str(native / "odoo") if native else "/usr/bin/odoo",
+                "interpreter": str(native / "venv" / "bin" / "python") if native else None,
                 "config_file": str(config_file),
                 "addons_path": [str(checkout)],
             },
@@ -212,12 +228,24 @@ def make_host(
             },
         }
     )
-    host = ProcessHost(config, TracedRunner())
+    host = FixtureHost(config, Runner()) if native else ProcessHost(config, TracedRunner())
     host.read_odoo_config()
     return host
 
 
-def shell(host: ProcessHost, database: str, script: str) -> dict:
+def unit_name(native: Path, runtime: Path) -> str:
+    relative = runtime.relative_to(native / "work")
+    if relative.parts not in {
+        ("success", "host"),
+        ("success", "restored-runtime"),
+        ("failure", "host"),
+        ("failure", "restored-runtime"),
+    }:
+        raise GhostError("The unit is outside the fixture's provisioned service list.")
+    return f"{native.name}-{'-'.join(relative.parts)}"
+
+
+def shell(host: FixtureHost, database: str, script: str) -> dict:
     if database not in host.config.deployment.databases:
         raise GhostError("The Odoo shell is limited to this fixture's configured databases.")
     # A single exec line works with both Odoo's pipe and interactive console modes.

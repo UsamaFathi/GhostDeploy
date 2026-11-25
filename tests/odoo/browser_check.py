@@ -2,7 +2,7 @@
 
 from urllib.parse import urlencode, urlsplit, urlunsplit
 
-from fixture import ProcessHost, shell
+from fixture import FixtureHost, ProcessHost, shell
 
 from ghostdeploy.core import GhostError
 
@@ -42,7 +42,7 @@ ACCESS = """\
 </record>"""
 
 
-def create_reader(host: ProcessHost, database: str, password: str) -> None:
+def create_reader(host: FixtureHost, database: str, password: str) -> None:
     assert shell(
         host,
         database,
@@ -58,7 +58,7 @@ def create_reader(host: ProcessHost, database: str, password: str) -> None:
 
 
 def verify(
-    host: ProcessHost,
+    host: FixtureHost,
     database: str,
     password: str,
     *,
@@ -73,7 +73,9 @@ def verify(
     origin = urlunsplit((url.scheme, url.netloc, "", "", ""))
     login = "/web/login?" + urlencode({"db": database, "redirect": PAGE, "login": LOGIN})
     with sync_playwright() as playwright:
-        browser = playwright.chromium.launch()
+        browser = playwright.chromium.launch(
+            channel=None if isinstance(host, ProcessHost) else "chrome"
+        )
         context = browser.new_context(
             base_url=origin, accept_downloads=True, service_workers="block"
         )
