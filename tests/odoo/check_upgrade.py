@@ -203,6 +203,50 @@ def systemd_pid(host: FixtureHost) -> int:
     return pid
 
 
+def verify_fresh_wheel_doctor(host: FixtureHost, root: Path, dbs: list[str]) -> None:
+    entrypoint = Path(sys.executable).with_name("ghostdeploy")
+    env = host.odoo_env()
+    version = subprocess.check_output([entrypoint, "version"], env=env, text=True, timeout=10)
+    assert version.strip() == "0.3.0a1", version
+    config = root / "doctor.json"
+    config.write_text(host.config.model_dump_json(), encoding="utf-8")
+    result = subprocess.run(
+        [entrypoint, "doctor", "--config", config, "--output", "json"],
+        env=env,
+        capture_output=True,
+        text=True,
+        timeout=120,
+        check=False,
+    )
+    report = json.loads(result.stdout)
+    statuses = {check["check"]: check["status"] for check in report["checks"]}
+    required = {
+        "Operating system",
+        "Service account",
+        "Service",
+        "Odoo connection settings",
+        "Systemd stop/start permissions",
+        "Git branch and cleanliness",
+        "Git tracking ref",
+        "Backup directory",
+        "State directory",
+        "Available backup storage",
+        *(f"Database {db}" for db in dbs),
+        *(f"Upgrade role for {db}" for db in dbs),
+    }
+    for name, status in statuses.items():
+        print(f"doctor: {status} {name}", flush=True)
+    assert result.returncode == 0 and report["ok"], (result.returncode, statuses)
+    assert all(statuses.get(name) == "PASS" for name in required), statuses
+    assert {
+        name.removeprefix("Database ") for name in statuses if name.startswith("Database ")
+    } == set(dbs)
+    print(
+        "Fresh wheel 0.3.0a1: doctor exit 0 for real systemd Odoo and three allowlisted databases.",
+        flush=True,
+    )
+
+
 def inspect_native_plan(
     host: FixtureHost, root: Path, dbs: list[str], base: str, target: str
 ) -> None:
@@ -358,6 +402,8 @@ def scenario(
                 host.runner.events.clear()
             else:
                 original_pid = systemd_pid(host)
+                if not fail_second:
+                    verify_fresh_wheel_doctor(host, root, dbs)
                 inspect_native_plan(host, root, dbs, base, target)
             exit_code, report = cli_deploy(host, root, target)
             if "id" not in report and native:

@@ -66,7 +66,14 @@ def own(path: Path, name: str) -> None:
     os.chown(path, identity.pw_uid, identity.pw_gid)
 
 
-def stage_runtime(root: Path, dependencies: Path, series: str) -> None:
+def stage_runtime(
+    root: Path,
+    dependencies: Path,
+    series: str,
+    release_wheel: Path,
+    wheelhouse: Path,
+    installer_python: Path,
+) -> None:
     image = f"odoo:{series}@{IMAGES[series]}"
     run(*DOCKER, "pull", image, timeout=240)
     with TemporaryDirectory(dir=root) as directory:
@@ -132,6 +139,16 @@ def stage_runtime(root: Path, dependencies: Path, series: str) -> None:
     # The runtime and test driver are root-owned. The app account only writes its fixture data.
     shutil.copytree(dependencies, site, dirs_exist_ok=True)
     site.chmod(0o755)
+    pip = (
+        installer_python,
+        "-m",
+        "pip",
+        "--disable-pip-version-check",
+        "--python",
+        root / "venv/bin/python",
+    )
+    run(*pip, "install", "--no-index", "--find-links", wheelhouse, release_wheel, timeout=120)
+    run(*pip, "check", timeout=30)
     (site / "odoo-fixture.pth").write_text(f"{root}/odoo-packages\n")
     for script in ("fixture.py", "check_upgrade.py", "browser_check.py"):
         shutil.copyfile(Path(__file__).with_name(script), root / script)
@@ -329,7 +346,13 @@ def run_assertions(root: Path, bindir: Path, series: str) -> int:
             run(SYSTEMCTL, "stop", unit)
 
 
-def main(dependencies: Path, series: str) -> int:
+def main(
+    dependencies: Path,
+    series: str,
+    release_wheel: Path,
+    wheelhouse: Path,
+    installer_python: Path,
+) -> int:
     if (
         sys.platform != "linux"
         or os.geteuid() != 0
@@ -368,7 +391,7 @@ def main(dependencies: Path, series: str) -> int:
             own(root / "home" / directory, root.name)
         work = root / "work"
         own(work, root.name)
-        stage_runtime(root, dependencies, series)
+        stage_runtime(root, dependencies, series, release_wheel, wheelhouse, installer_python)
         # Download the pinned headless executable only. The runner supplies the shared libraries.
         run(
             "/usr/bin/env",
@@ -409,10 +432,21 @@ if __name__ == "__main__":
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("dependencies", type=Path)
     parser.add_argument("version", choices=IMAGES)
+    parser.add_argument("--release-wheel", type=Path, required=True)
+    parser.add_argument("--wheelhouse", type=Path, required=True)
+    parser.add_argument("--installer-python", type=Path, required=True)
     args = parser.parse_args()
 
     def interrupt(_signum, _frame) -> None:
         raise KeyboardInterrupt
 
     signal.signal(signal.SIGTERM, interrupt)
-    raise SystemExit(main(args.dependencies, args.version))
+    raise SystemExit(
+        main(
+            args.dependencies,
+            args.version,
+            args.release_wheel,
+            args.wheelhouse,
+            args.installer_python,
+        )
+    )
