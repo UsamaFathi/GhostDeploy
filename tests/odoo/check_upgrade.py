@@ -487,7 +487,8 @@ def main() -> None:
 
 
 def combined(root: Path, series: str) -> None:
-    assert root.parent == Path("/var/lib") and root.stat().st_uid == 0
+    assert root.parent in {Path("/srv"), Path("/var/lib"), Path("/var/tmp")}
+    assert root.stat().st_uid == 0
     work = root / "work"
     assert work.stat().st_uid == os.geteuid() != 0
     connections = json.loads((work / "connection.json").read_text())

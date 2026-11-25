@@ -9,6 +9,7 @@ import re
 import shutil
 import signal
 import socket
+import stat
 import subprocess
 import sys
 import tarfile
@@ -26,6 +27,23 @@ IMAGES = {
     "18.0": "sha256:0bd79cf07f59105c5697667c2241b86447e99c6adb036200df0e4e295785bdf3",
     "19.0": "sha256:03a47921f9eef2c225ded1167fe7828465d2b3177883f30d173bb1c3c792949b",
 }
+FIXTURE_PARENTS = ("/srv", "/var/lib", "/var/tmp")
+
+
+def fixture_parent() -> Path | None:
+    for parent in map(Path, FIXTURE_PARENTS):
+        if not parent.is_dir() or parent.resolve() != parent:
+            continue
+        if os.statvfs(parent).f_flag & os.ST_NOEXEC:
+            continue
+        for directory in (parent, *parent.parents):
+            info = directory.stat()
+            if info.st_uid != 0 or (info.st_mode & 0o022 and not info.st_mode & stat.S_ISVTX):
+                print(f"Fixture storage rejected because of ownership or mode on {directory}.")
+                break
+        else:
+            return parent
+    return None
 
 
 def run(*args, timeout: int = 30, check: bool = True, **kwargs):
@@ -297,7 +315,12 @@ def main(dependencies: Path, series: str) -> int:
     run(SYSTEMCTL, "show", "--property=Version")
     print(platform.platform(), platform.freedesktop_os_release()["PRETTY_NAME"], flush=True)
     start = monotonic()
-    root = Path("/var/lib") / f"gdst{uuid4().hex[:12]}"
+    parent = fixture_parent()
+    if parent is None:
+        print("SKIPPED: no trusted, executable parent directory for fixture storage.")
+        return 77
+    root = parent / f"gdst{uuid4().hex[:12]}"
+    print(f"Fixture storage: {root}", flush=True)
     root.mkdir(mode=0o755)
     with ExitStack() as cleanup:
         cleanup.callback(shutil.rmtree, root)
