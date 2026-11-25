@@ -252,6 +252,7 @@ def units(root: Path, cleanup: ExitStack) -> None:
                 "[Service]\nType=exec\n"
                 f"User={root.name}\nWorkingDirectory={root}/work\n"
                 f"Environment=LD_LIBRARY_PATH={root}/native-libs\n"
+                "Environment=PYTHONDONTWRITEBYTECODE=1\nUMask=0077\n"
                 f"ExecStart={root}/venv/bin/python {root}/odoo -c {root}/work/{scenario}/{runtime}/odoo.conf\n"
                 "KillMode=control-group\nSendSIGKILL=yes\nTimeoutStopSec=20s\n"
                 "NoNewPrivileges=true\nIPAddressDeny=any\nIPAddressAllow=localhost\n"
@@ -325,6 +326,8 @@ def main(dependencies: Path, series: str) -> int:
     with ExitStack() as cleanup:
         cleanup.callback(shutil.rmtree, root)
         account(root.name, root / "home", cleanup)
+        for directory in (".local", ".local/state", ".local/state/ghostdeploy"):
+            own(root / "home" / directory, root.name)
         work = root / "work"
         own(work, root.name)
         stage_runtime(root, dependencies, series)

@@ -360,6 +360,8 @@ def scenario(
                 original_pid = systemd_pid(host)
                 inspect_native_plan(host, root, dbs, base, target)
             exit_code, report = cli_deploy(host, root, target)
+            if "id" not in report and native:
+                print(git(checkout, "status", "--porcelain", "--ignored"), flush=True)
             assert "id" in report, report
             assert report["base_sha"] == base and report["target_sha"] == target
             assert report["upgrades"] == {db: [ADDON] for db in dbs[:2]}
@@ -491,6 +493,7 @@ def combined(root: Path, series: str) -> None:
     assert root.stat().st_uid == 0
     work = root / "work"
     assert work.stat().st_uid == os.geteuid() != 0
+    os.umask(0o077)
     connections = json.loads((work / "connection.json").read_text())
     assert connections["live"]["port"] != connections["recovery"]["port"]
     clusters = {
