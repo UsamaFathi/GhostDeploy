@@ -5,3 +5,4 @@ recursive-include tests *.py
 recursive-include tests/odoo *.yml *.sql Dockerfile
 recursive-include tests/ssh Dockerfile
 include .dockerignore
+include .github/workflows/integration.yml

@@ -11,6 +11,18 @@ from ghostdeploy.core import GhostError
 from ghostdeploy.workflow import generate, ssh_request
 
 TARGET = "b" * 40
+INTEGRATION = Path(__file__).resolve().parents[1] / ".github/workflows/integration.yml"
+
+
+def bash_executable() -> str:
+    if os.name == "nt":
+        git = shutil.which("git")
+        bash = Path(git).resolve().parents[1] / "bin" / "bash.exe" if git else None
+    else:
+        bash = shutil.which("bash")
+    if not bash or not Path(bash).is_file():
+        pytest.skip("Bash required")
+    return str(bash)
 
 
 def test_production_dispatch_requires_configured_branch(config_data):
@@ -56,13 +68,7 @@ def test_forced_ssh_command_rejects_unexpected_requests(config_data, payload):
     ],
 )
 def test_generated_bash_with_fake_ssh(config_data, tmp_path, mode):
-    if os.name == "nt":
-        git = shutil.which("git")
-        bash = Path(git).resolve().parents[1] / "bin" / "bash.exe" if git else None
-    else:
-        bash = shutil.which("bash")
-    if not bash or not Path(bash).is_file():
-        pytest.skip("Bash required")
+    bash = bash_executable()
     production = mode.endswith("_prod")
     if production:
         config_data["deployment"]["environment"] = "production"
@@ -88,7 +94,7 @@ def test_generated_bash_with_fake_ssh(config_data, tmp_path, mode):
         "STUB_EXIT": "23" if mode == "remote_failure" else "0",
     }
     run = subprocess.run(
-        [str(bash), "-c", stub + script],
+        [bash, "-c", stub + script],
         env=env,
         cwd=tmp_path,
         capture_output=True,
@@ -103,3 +109,46 @@ def test_generated_bash_with_fake_ssh(config_data, tmp_path, mode):
     assert run.returncode == (23 if mode == "remote_failure" else 0), run.stderr
     assert "StrictHostKeyChecking=yes" in run.stdout
     assert f"deploy {environment} {TARGET} attendance yes" in run.stdout
+
+
+def test_requested_systemd_without_sudo_exits_nonzero_and_reports_skip(tmp_path):
+    steps = yaml.safe_load(INTEGRATION.read_text())["jobs"]["hosted-systemd"]["steps"]
+    assertions = next(step["run"] for step in steps if step.get("id") == "assertions")
+    summary = next(
+        step["run"] for step in steps if step.get("name") == "Report requested systemd gate"
+    )
+    env = {
+        **os.environ,
+        "RUNNER_ENVIRONMENT": "github-hosted",
+        "GITHUB_OUTPUT": "outputs.txt",
+        "GITHUB_STEP_SUMMARY": "summary.txt",
+        "SUITE": "systemd",
+    }
+    bash = bash_executable()
+    check = subprocess.run(
+        [
+            bash,
+            "-eo",
+            "pipefail",
+            "-c",
+            "cat() { echo systemd; }; sudo() { return 1; }\n" + assertions,
+        ],
+        cwd=tmp_path,
+        env=env,
+        capture_output=True,
+        text=True,
+        timeout=15,
+    )
+    assert check.returncode == 77 and "SKIPPED" in check.stdout
+    assert (tmp_path / "outputs.txt").read_text().strip() == "result=SKIPPED"
+    subprocess.run(
+        [bash, "-eo", "pipefail", "-c", summary],
+        cwd=tmp_path,
+        env={**env, "RESULT": "SKIPPED", "JOB_STATUS": "failure"},
+        check=True,
+        timeout=15,
+    )
+    assert (tmp_path / "summary.txt").read_text().splitlines() == [
+        "systemd: SKIPPED",
+        "The required assertions did not run. The release gate remains PENDING.",
+    ]

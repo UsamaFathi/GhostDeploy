@@ -11,8 +11,10 @@ import signal
 import socket
 import subprocess
 import sys
+import tarfile
 from contextlib import ExitStack
 from pathlib import Path
+from tempfile import TemporaryDirectory
 from time import monotonic
 from uuid import uuid4
 
@@ -48,27 +50,46 @@ def own(path: Path, name: str) -> None:
 
 def stage_runtime(root: Path, dependencies: Path, series: str) -> None:
     image = f"odoo:{series}@{IMAGES[series]}"
-    container = f"{root.name}-payload"
     run(*DOCKER, "pull", image, timeout=240)
-    run(*DOCKER, "create", "--name", container, "--network", "none", image)
-    try:
-        run(*DOCKER, "cp", f"{container}:/usr/bin/odoo", root / "odoo")
-        run(
+    with TemporaryDirectory(dir=root) as directory:
+        payload = Path(directory)
+        export = payload / "runtime.tar"
+        container = run(
             *DOCKER,
-            "cp",
-            f"{container}:/usr/lib/python3/dist-packages",
-            root / "odoo-packages",
-            timeout=90,
-        )
-        run(
-            *DOCKER,
-            "cp",
-            f"{container}:/usr/lib/x86_64-linux-gnu",
-            root / "image-libs",
-            timeout=90,
-        )
-    finally:
-        run(*DOCKER, "rm", container)
+            "create",
+            "--name",
+            f"{root.name}-payload",
+            "--network",
+            "none",
+            "--read-only",
+            "--user",
+            "odoo",
+            "--entrypoint",
+            "/usr/bin/tar",
+            image,
+            "-C",
+            "/usr",
+            "--dereference",
+            "--hard-dereference",
+            "-cf",
+            "-",
+            "bin/odoo",
+            "lib/python3/dist-packages",
+            "lib/x86_64-linux-gnu",
+            capture_output=True,
+            text=True,
+        ).stdout.strip()
+        try:
+            # Resolve packaged data symlinks in the image's namespace, where their targets live.
+            with export.open("wb") as archive:
+                run(*DOCKER, "start", "--attach", container, stdout=archive, timeout=120)
+        finally:
+            run(*DOCKER, "rm", "-f", container)
+        with tarfile.open(export) as archive:
+            archive.extractall(payload / "files", filter="data")
+        (payload / "files/bin/odoo").rename(root / "odoo")
+        (payload / "files/lib/python3/dist-packages").rename(root / "odoo-packages")
+        (payload / "files/lib/x86_64-linux-gnu").rename(root / "image-libs")
     # Only supply SONAMEs absent from the runner. Keep its native loader and libc.
     available = {
         line.split()[0]
@@ -94,6 +115,11 @@ def stage_runtime(root: Path, dependencies: Path, series: str) -> None:
     (site / "odoo-fixture.pth").write_text(f"{root}/odoo-packages\n")
     for script in ("fixture.py", "check_upgrade.py", "browser_check.py"):
         shutil.copyfile(Path(__file__).with_name(script), root / script)
+
+
+def stop_postgres(pg_ctl: tuple, data: Path) -> None:
+    if (data / "postmaster.pid").is_file():
+        run(*pg_ctl, "-m", "fast", "-w", "stop")
 
 
 def postgres(root: Path, cleanup: ExitStack, bindir: Path) -> tuple[int, str]:
@@ -129,7 +155,7 @@ def postgres(root: Path, cleanup: ExitStack, bindir: Path) -> tuple[int, str]:
         listener.bind(("127.0.0.1", 0))
         port = listener.getsockname()[1]
     pg_ctl = (*as_user(name), bindir / "pg_ctl", "-D", pgdata)
-    cleanup.callback(run, *pg_ctl, "-m", "fast", "-w", "stop", check=False)
+    cleanup.callback(stop_postgres, pg_ctl, pgdata)
     run(
         *pg_ctl,
         "-l",
@@ -256,11 +282,14 @@ def main(dependencies: Path, series: str) -> int:
     ):
         print("SKIPPED: combined staging requires a hosted Ubuntu 24.04 VM with systemd PID 1.")
         return 77
+    if not all(shutil.which(tool) for tool in ("pg_config", "google-chrome", DOCKER[0])):
+        print("SKIPPED: the runner must supply PostgreSQL, Chrome and a local Docker client.")
+        return 77
     bindir = Path(
         run("/usr/bin/pg_config", "--bindir", capture_output=True, text=True).stdout.strip()
     )
-    if not (bindir / "initdb").is_file() or not shutil.which("google-chrome"):
-        print("SKIPPED: the runner must supply PostgreSQL binaries and Chrome.")
+    if not (bindir / "initdb").is_file():
+        print("SKIPPED: the runner must supply PostgreSQL server binaries.")
         return 77
     run(SYSTEMCTL, "show", "--property=Version")
     print(platform.platform(), platform.freedesktop_os_release()["PRETTY_NAME"], flush=True)
