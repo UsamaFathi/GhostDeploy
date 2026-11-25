@@ -204,4 +204,6 @@ def ssh_main() -> None:
         print(json.dumps({"ok": False, "error": safe_error(exc)}))
         raise SystemExit(1) from None
     print(json.dumps(asdict(report)))
-    raise SystemExit(1 if report.status == "failed" else 0)
+    raise SystemExit(
+        0 if report.status in {"succeeded", "unchanged"} and report.phase == "complete" else 1
+    )

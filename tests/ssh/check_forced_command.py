@@ -44,6 +44,7 @@ class FixtureExecutor:
             "fixture",
             "a" * 40,
             target,
+            phase="upgrading_database" if failed else "complete",
             status="failed" if failed else "succeeded",
         )
 

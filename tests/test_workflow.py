@@ -1,16 +1,48 @@
 import os
 import shutil
 import subprocess
+import sys
 from pathlib import Path
+from types import SimpleNamespace
 
 import pytest
 import yaml
 
 from ghostdeploy.config import validate
 from ghostdeploy.core import GhostError
-from ghostdeploy.workflow import generate, ssh_request
+from ghostdeploy.deploy import Report
+from ghostdeploy.workflow import generate, ssh_main, ssh_request
 
 TARGET = "b" * 40
+
+
+@pytest.mark.parametrize(
+    ("status", "phase", "code"),
+    [
+        ("succeeded", "complete", 0),
+        ("unchanged", "complete", 0),
+        ("failed", "upgrading_database", 1),
+        ("in_progress", "prepared", 1),
+        ("succeeded", "finalizing", 1),
+    ],
+)
+def test_ssh_exit_requires_completed_success(config_data, monkeypatch, status, phase, code):
+    config = validate(config_data)
+    report = Report("a" * 32, config.odoo.unit, "", "a" * 40, TARGET, phase=phase, status=status)
+    monkeypatch.setattr(sys, "argv", ["ghostdeploy-ssh", "--config", "/fixture.yml"])
+    monkeypatch.setenv(
+        "SSH_ORIGINAL_COMMAND", f"deploy {config.deployment.environment} {TARGET} - no"
+    )
+    monkeypatch.setattr("ghostdeploy.workflow.load", lambda _path: config)
+    monkeypatch.setattr(
+        "ghostdeploy.workflow.Executor",
+        lambda *_args: SimpleNamespace(execute=lambda *_args, **_kwargs: report),
+    )
+    with pytest.raises(SystemExit) as exit_status:
+        ssh_main()
+    assert exit_status.value.code == code
+
+
 INTEGRATION = Path(__file__).resolve().parents[1] / ".github/workflows/integration.yml"
 
 
