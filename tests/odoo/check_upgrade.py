@@ -330,7 +330,7 @@ def scenario(
     recovery: Cluster | None = None,
 ) -> None:
     started = monotonic()
-    root.mkdir()
+    root.mkdir(mode=0o700)
     checkout, base, target = make_revisions(root, series, fail_second=fail_second)
     prefix = "ghostdeploy_test_" + uuid4().hex[:12]
     dbs = [f"{prefix}_{suffix}" for suffix in ("a", "b", "c")]

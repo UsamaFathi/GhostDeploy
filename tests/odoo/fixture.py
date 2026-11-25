@@ -182,7 +182,7 @@ def make_host(
     *,
     native: Path | None = None,
 ) -> FixtureHost:
-    root.mkdir()
+    root.mkdir(mode=0o700)
     for name in ("data", "backups", "state"):
         (root / name).mkdir(mode=0o700)
     if any(db not in cluster.created for db in dbs):
