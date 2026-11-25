@@ -504,18 +504,22 @@ def combined(root: Path, series: str) -> None:
     version = Runner().run([sys.executable, str(binary), "--version"], label="Odoo version")
     assert series.encode() in version
     print(version.decode().strip(), flush=True)
-    scenario(
-        work / "success", clusters["live"], series, fail_second=False, browser=True, native=root
-    )
-    scenario(
-        work / "failure",
-        clusters["live"],
-        series,
-        fail_second=True,
-        browser=True,
-        native=root,
-        recovery=clusters["recovery"],
-    )
+    failures = []
+    for label, fail_second in (("success", False), ("failure", True)):
+        try:
+            scenario(
+                work / label,
+                clusters["live"],
+                series,
+                fail_second=fail_second,
+                browser=True,
+                native=root,
+                recovery=clusters["recovery"],
+            )
+        except Exception as error:
+            failures.append(error)
+    if failures:
+        raise ExceptionGroup("Combined staging scenario failures", failures)
 
 
 if __name__ == "__main__":

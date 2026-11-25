@@ -295,22 +295,26 @@ def units(root: Path, cleanup: ExitStack) -> None:
 
 
 def run_assertions(root: Path, bindir: Path, series: str) -> int:
-    scope = f"{root.name}-checks.scope"
-    if unit_load_state(scope) != b"not-found":
-        raise RuntimeError("The generated fixture scope is already in use.")
+    unit = f"{root.name}-checks.service"
+    if unit_load_state(unit) != b"not-found":
+        raise RuntimeError("The generated fixture driver unit is already in use.")
     try:
         return run(
             "/usr/bin/systemd-run",
-            "--scope",
+            "--wait",
+            "--pipe",
             "--collect",
             "--quiet",
             "--unit",
-            scope,
+            unit,
+            "--property=Type=exec",
             "--property=TimeoutStopSec=5s",
-            *as_user(root.name),
-            "/usr/bin/env",
-            f"PATH={bindir}:/usr/bin:/bin",
-            f"LD_LIBRARY_PATH={root}/native-libs",
+            f"--uid={root.name}",
+            f"--working-directory={root}",
+            f"--setenv=HOME={root}/home",
+            f"--setenv=PATH={bindir}:/usr/bin:/bin",
+            f"--setenv=LD_LIBRARY_PATH={root}/native-libs",
+            f"--setenv=PLAYWRIGHT_BROWSERS_PATH={root}/browser-binaries",
             root / "venv/bin/python",
             root / "check_upgrade.py",
             "--native",
@@ -321,8 +325,8 @@ def run_assertions(root: Path, bindir: Path, series: str) -> int:
             timeout=600,
         ).returncode
     finally:
-        if unit_load_state(scope) == b"loaded":
-            run(SYSTEMCTL, "stop", scope)
+        if unit_load_state(unit) == b"loaded":
+            run(SYSTEMCTL, "stop", unit)
 
 
 def main(dependencies: Path, series: str) -> int:
@@ -365,6 +369,18 @@ def main(dependencies: Path, series: str) -> int:
         work = root / "work"
         own(work, root.name)
         stage_runtime(root, dependencies, series)
+        # Download the pinned headless executable only. The runner supplies the shared libraries.
+        run(
+            "/usr/bin/env",
+            f"PLAYWRIGHT_BROWSERS_PATH={root}/browser-binaries",
+            root / "venv/bin/python",
+            "-m",
+            "playwright",
+            "install",
+            "--only-shell",
+            "chromium",
+            timeout=150,
+        )
         databases = {
             "live": postgres(root / "db", root.name + "pg", cleanup, bindir),
             "recovery": postgres(root / "recovery-db", root.name + "rs", cleanup, bindir),

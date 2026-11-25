@@ -78,16 +78,18 @@ def verify(
     if not isinstance(host, ProcessHost):
         storage = Path(host.odoo.config_file).parent / "browser"
         storage.mkdir(mode=0o700)
-        environment = {k: v for k, v in os.environ.items() if k != "LD_LIBRARY_PATH"}
+        environment = {
+            k: v
+            for k, v in os.environ.items()
+            if k != "LD_LIBRARY_PATH" and not k.lower().endswith("_proxy")
+        }
         for variable in ("XDG_CONFIG_HOME", "XDG_CACHE_HOME"):
             directory = storage / variable
             directory.mkdir(mode=0o700)
             environment[variable] = str(directory)
-        environment["CHROME_CONFIG_HOME"] = environment["XDG_CONFIG_HOME"]
         launch_options = {
-            "channel": "chrome",
             "env": environment,
-            "args": ["--disable-crashpad-for-testing"],
+            "args": ["--no-proxy-server"],
         }
     with sync_playwright() as playwright:
         browser = playwright.chromium.launch(**launch_options)
