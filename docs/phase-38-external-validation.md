@@ -2,6 +2,8 @@
 
 GhostDeploy remains **Alpha**, version `0.3.0.dev0`. The fetched `main` baseline was `8b53a1326a4aab3ce482b9db3426302b0b0bb61b`. The proposed public Alpha version is `0.3.0a1`, subject to maintainer approval. [Draft release notes and checklist](alpha-release.md)
 
+The SSH fix is `f824da771988d3b4ea1dcc73296bd2ae1300b691`. The final implementation tested for Phase 3.8 is `ebde21cf66324560ca4f5388ac4ec5510075c231`. The subsequent report commit records results and operator clarifications.
+
 ## Staging kit
 
 The [independent staging guide](../validation/staging/README.md) covers the baseline addon, the two target commits, synthetic data, the dedicated service and local PostgreSQL cluster, scoped sudo, the restricted key, dispatch and evidence submission. It uses the existing addon fixture and workflow generator. The kit is included in the source distribution.
@@ -20,6 +22,19 @@ The [sanitized report template](../validation/staging/report-template.md) and Gi
 | Sudo, allowlists and storage | Host preflight checks service identity and required sudo commands. The kit makes read-only denial probes and requires the precise synthetic allowlist. Existing private backup and state checks, file ownership controls, per-unit locking and durable pending journals remain in force. The verifier follows only the named private artifact paths and checks recorded hashes. |
 | Production confirmation | The generated production workflow requires manual dispatch and explicit confirmation. An already authorized forced-command key is a host-side trust boundary, separate from GitHub reviewer enforcement. The kit refuses production configurations and uses a distinct staging identity and authorization. |
 | Python dependencies | `pip-audit 2.10.1` queried the advisory service for 43 exact installed package versions from the runtime and development environment. It reported zero known advisories and no skipped packages. This covers the audited snapshot. Deployment hosts and later resolved dependency sets need their own audit. |
+
+The repository uses pinned checkout v4.2.2 and setup-python v5.6.0, with credential persistence disabled for checkout. The hosted logs retained a warning about the Node.js 20 metadata on those pins and ran them on Node.js 24. Test workflows use ordinary pull requests or manual dispatch, with read-only contents access. [Checkout releases](https://github.com/actions/checkout/releases) · [setup-python releases](https://github.com/actions/setup-python/releases)
+
+## Verification
+
+| Check | Result |
+| --- | --- |
+| Local pytest | Windows and Python 3.11.9 collected 148 tests. 142 passed and six skipped, including the opt-in PostgreSQL suite and five platform cases. |
+| Hosted pytest | Each Ubuntu job collected 148, passed 147 and skipped the opt-in PostgreSQL test. Windows collected 148, passed 142 and skipped six. [CI](https://github.com/UsamaFathi/GhostDeploy/actions/runs/45615378687) |
+| Workflow regression | The disposable real OpenSSH fixture passed with a pinned host key, forced command, approval and exact-SHA checks, and remote failure propagation. [Loopback SSH run](https://github.com/UsamaFathi/GhostDeploy/actions/runs/45615379051) |
+| Quality and packaging | Ruff lint and formatting, actionlint on repository and generated staging and production workflows, the wheel and source builds, and strict Twine passed. A fresh wheel install passed help, version and staging config smoke checks. The installed Python also ran the staging kit's help in isolated mode. Candidate hashes are generated alongside the artifacts as `SHA256SUMS`. |
+
+The source changes are in `ghostdeploy/workflow.py`, `validation/staging/`, `MANIFEST.in`, and the staging, documentation and SSH regressions under `tests/`. The remaining changes add the Alpha issue form, release and validation reports, and update `README.md`, `CHANGELOG.md` and the support and release-testing guide.
 
 ## Evidence and remaining gates
 

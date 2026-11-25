@@ -21,7 +21,7 @@ import base64
 
 record = env.ref("ghostdeploy_test_addon.sample")
 data = b"GhostDeploy synthetic alpha attachment"
-env["ir.attachment"].create(
+attachment = env["ir.attachment"].create(
     {
         "name": "ghostdeploy-recovery.bin",
         "res_model": record._name,
@@ -29,6 +29,7 @@ env["ir.attachment"].create(
         "datas": base64.b64encode(data),
     }
 )
+assert attachment.store_fname
 env.cr.commit()
 ```
 
@@ -104,7 +105,7 @@ On the failure fixture, use the same checks with `--expect failed`. Expect a fai
 
 Recovery modifies a separate disposable environment. Follow [backup and recovery](../../docs/operations.md) to restore the matching dump and filestore to a new database and a new data directory at the recorded base commit. Verify the destination is empty before restore. Keep it local to the recovery environment. Sign in with a synthetic test account, check the original record, and compare the attachment's downloaded bytes to the saved hash. Recheck the failed source journal and service after the drill.
 
-Submit the [sanitized report](report-template.md) through the repository's Alpha validation issue form. Public repositories can expose Actions logs and the remote report contains paths and database names. Use only synthetic names and paths in a public test repository. Follow [security reporting](../../SECURITY.md) for sensitive findings. Include workflow links only when their logs are suitable for the audience. Copy minimal, redacted error excerpts. Keep private raw logs, keys, authorization files, application configs, dumps, customer data and full hostnames out of the issue.
+Submit the [sanitized report](report-template.md) through the repository's Alpha validation issue form once it is available. Public repositories can expose Actions logs and the remote report contains paths and database names. Use only synthetic names and paths in a public test repository. Follow [security reporting](../../SECURITY.md) for sensitive findings. Include workflow links only when their logs are suitable for the audience. Copy minimal, redacted error excerpts. Keep private raw logs, keys, authorization files, application configs, dumps, customer data and full hostnames out of the issue.
 
 To clean up, disable the disposable repository's dispatches, revoke its dedicated environment secrets and remove the exact restricted public key. End active runs and verify the owned unit is inactive. Remove the authorization from the disposable host. Retain only the evidence allowed by your retention policy, then dispose of the dedicated VM and restore environment through your VM manager. The kit has no destructive cleanup command. The [uninstall procedure](../../docs/installation.md#uninstall-ghostdeploy) covers removing only the installed package.
 
