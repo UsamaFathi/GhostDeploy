@@ -5,14 +5,14 @@
 | Component | Scope | Evidence for 0.3.0.dev0 |
 | --- | --- | --- |
 | Ubuntu | Target platform for execution | Linux lock and journal binding regressions passed on Ubuntu CI. |
-| Odoo 18.0 | Targeted | Executor upgrade, intentional failure and authenticated Chromium restore passed against `18.0-20261112` in Docker. |
-| Odoo 19.0 | Targeted | Executor upgrade, intentional failure and authenticated Chromium restore passed against `19.0-20261112` in Docker. |
-| PostgreSQL | Supported by native clients | PostgreSQL 17.12 on Windows: real snapshot query, dump, archive decode and restore into a separate synthetic database. |
-| Systemd | Targeted | Real systemd and scoped sudo passed for a synthetic service on Ubuntu 24.04. Combined Odoo-on-systemd staging remains pending. |
+| Odoo 18.0 | Targeted | Combined systemd deployment, partial failure and authenticated Chromium restore passed against `18.0-20261112` on hosted Ubuntu. |
+| Odoo 19.0 | Targeted | Combined systemd deployment, partial failure and authenticated Chromium restore passed against `19.0-20261112` on hosted Ubuntu. |
+| PostgreSQL | Supported by native clients | Standalone archive restore passed with 17.12. Combined Odoo recovery used a separate 16.16 cluster. |
+| Systemd | Targeted | Real lifecycle and scoped sudo passed on Ubuntu 24.04 with both the synthetic service and the real Odoo units. |
 | Multi-database | Implemented | Verified with Git fixtures and real Odoo on three explicitly allowlisted databases, including intentional failure of the second upgrade. |
 | GitHub Actions and SSH | Implemented | Workflow syntax, Bash stub and disposable OpenSSH passed, including forced-command and host-key checks. Deployment from GitHub to a real staging instance remains pending. |
 
-Ubuntu is the deployment target. Windows supports development and offline planning. See the [Phase 3.5 integration report](phase-35-integration-report.md) and [Phase 3.6 verification report](phase-36-beta-validation.md) for tested revisions and evidence.
+Ubuntu is the deployment target. Windows supports development and offline planning. See the [Phase 3.7 combined staging report](phase-37-combined-staging.md), [Phase 3.6 verification report](phase-36-beta-validation.md) and [Phase 3.5 integration report](phase-35-integration-report.md) for tested revisions and evidence.
 
 ## Hermetic suite
 
@@ -77,7 +77,7 @@ docker run --rm --network none "$image"
 docker image rm "$image"
 ```
 
-Use a verified local Docker daemon. These image builds and database installs may take several minutes and require local image and volume storage. You can also dispatch **Disposable integration** with `postgresql`, `odoo18`, `odoo19`, `browser18`, `browser19`, `ssh` or `systemd`. The systemd job is restricted to a disposable GitHub-hosted Ubuntu runner and provisions a synthetic service. Check the repository's eligibility and current account limits before dispatching. [GitHub Actions billing and usage](https://docs.github.com/en/actions/concepts/billing-and-usage)
+Use a verified local Docker daemon. Image builds and database installs may take several minutes. Manually dispatch **Disposable integration** with `postgresql`, `odoo18`, `odoo19`, `browser19`, `ssh`, `systemd`, `combined19` or `browser18`. The last two choices run the combined native systemd fixture for Odoo 19 and Odoo 18, using pinned headless Chromium, the disposable Ubuntu runner's browser libraries and two new PostgreSQL clusters. The standalone `systemd` choice exercises a synthetic unit. A requested run without the needed host capabilities reports `SKIPPED` and returns a nonzero status. Check current account limits before dispatching. [GitHub Actions billing and usage](https://docs.github.com/en/actions/concepts/billing-and-usage)
 
 ## Release gate
 
@@ -87,16 +87,16 @@ Use a verified local Docker daemon. These image builds and database installs may
 | First-time setup walkthrough and docs checks | Exercised through CLI fixtures for Odoo 18 and 19, including real temporary Git clones and a controlled host simulation. A fresh Ubuntu onboarding run remains pending. |
 | Build and verify wheel and sdist | Passed locally. |
 | PostgreSQL dump and restore into a disposable database | Passed locally with PostgreSQL 17.12. |
-| Multi-database partial failure | Passed in both Odoo images. Real systemd recovery after failure remains pending. |
+| Multi-database partial failure | Passed with Odoo 18 and 19 under native systemd. The failed source stays inactive with a pending journal. |
 | Linux file and service-level lock | Passed on Ubuntu CI. |
-| Odoo 18 upgrade | Passed with real Odoo and the executor in Docker. |
-| Odoo 19 upgrade | Passed with real Odoo and the executor in Docker. |
+| Odoo 18 upgrade | Passed with real Odoo and the executor under systemd on hosted Ubuntu. |
+| Odoo 19 upgrade | Passed with real Odoo and the executor under systemd on hosted Ubuntu. |
 | Real systemd stop/start, sudo scope, process identity and health | Passed with the synthetic service on Ubuntu 24.04. |
-| Real Odoo, PostgreSQL and systemd deployment together | Pending disposable Ubuntu VM. |
+| Real Odoo, PostgreSQL and systemd deployment together | Passed for both Odoo versions on hosted Ubuntu 24.04. |
 | Restricted command on a real OpenSSH server | Passed against disposable loopback OpenSSH. |
 | GitHub Actions SSH to a restricted staging user | Pending an authorized disposable staging host. |
-| Functional Odoo restore | ORM checks and authenticated browser login, record read and attachment download passed on both Odoo series in Docker. Combined host staging remains pending. |
+| Functional Odoo restore | Passed for both Odoo versions after an intentional deployment failure. An independent Odoo unit and PostgreSQL cluster served the recovered record and attachment. |
 
 See the [staging procedure](operations.md#staging-validation-before-production) for the remaining service and application checks.
 
-For a public Beta, complete the pending staging gates, including a failure on the second upgrade and a functional restore with matching filestore. Verify the documented workstation, host and GitHub steps end to end on disposable infrastructure. Record both runtime versions and the recovered state before publishing anything.
+Keep GhostDeploy Alpha. The next staging gate uses the generated GitHub workflow and an independently reachable, explicitly authorized disposable host to verify environment approval, branch restrictions, SSH policy, and remote failure reporting end to end.

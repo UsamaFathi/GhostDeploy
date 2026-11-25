@@ -2,6 +2,8 @@
 
 ## 0.3.0.dev0 (unreleased)
 
+- Add hosted combined staging checks with native Odoo, private PostgreSQL clusters, real systemd and authenticated recovery.
+- Run hosted Odoo 18 browser validation with pinned headless Chromium and report skipped systemd assertions separately from a pass.
 - Add authenticated browser checks for upgrade and restore in the Odoo 18 and 19 fixtures.
 - Exercise real systemd start, stop and recovery with command-scoped sudo on disposable Ubuntu, and expand restricted SSH checks.
 - Add a disposable Odoo executor fixture with real Git, PostgreSQL, Odoo and backups, an isolated Odoo process, intentional second-database failure and a functional restore.
