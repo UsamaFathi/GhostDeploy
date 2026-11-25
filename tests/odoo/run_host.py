@@ -216,6 +216,19 @@ def postgres(home: Path, name: str, cleanup: ExitStack, bindir: Path) -> dict[st
     return {"port": port, "token": token}
 
 
+def unit_load_state(unit: str) -> bytes:
+    return run(
+        SYSTEMCTL,
+        "show",
+        "--property=LoadState",
+        "--value",
+        "--",
+        unit,
+        capture_output=True,
+        check=False,
+    ).stdout.strip()
+
+
 def remove_unit(unit: str, path: Path) -> None:
     try:
         run(SYSTEMCTL, "stop", unit)
@@ -233,17 +246,7 @@ def units(root: Path, cleanup: ExitStack) -> None:
         ("failure", "restored-runtime"),
     ):
         unit = f"{root.name}-{scenario}-{runtime}.service"
-        state = run(
-            SYSTEMCTL,
-            "show",
-            "--property=LoadState",
-            "--value",
-            "--",
-            unit,
-            capture_output=True,
-            check=False,
-        )
-        if state.stdout.strip() != b"not-found":
+        if unit_load_state(unit) != b"not-found":
             raise RuntimeError(f"The generated fixture unit is already in use: {unit}.")
         path = Path("/run/systemd/system") / unit
         with path.open("x") as definition:
@@ -289,6 +292,37 @@ def units(root: Path, cleanup: ExitStack) -> None:
         capture_output=True,
     )
     assert denied.returncode != 0
+
+
+def run_assertions(root: Path, bindir: Path, series: str) -> int:
+    scope = f"{root.name}-checks.scope"
+    if unit_load_state(scope) != b"not-found":
+        raise RuntimeError("The generated fixture scope is already in use.")
+    try:
+        return run(
+            "/usr/bin/systemd-run",
+            "--scope",
+            "--collect",
+            "--quiet",
+            "--unit",
+            scope,
+            "--property=TimeoutStopSec=5s",
+            *as_user(root.name),
+            "/usr/bin/env",
+            f"PATH={bindir}:/usr/bin:/bin",
+            f"LD_LIBRARY_PATH={root}/native-libs",
+            root / "venv/bin/python",
+            root / "check_upgrade.py",
+            "--native",
+            root,
+            series,
+            cwd=root,
+            check=False,
+            timeout=600,
+        ).returncode
+    finally:
+        if unit_load_state(scope) == b"loaded":
+            run(SYSTEMCTL, "stop", scope)
 
 
 def main(dependencies: Path, series: str) -> int:
@@ -344,20 +378,7 @@ def main(dependencies: Path, series: str) -> int:
         units(root, cleanup)
         test_start = monotonic()
         print(f"Combined staging setup completed in {test_start - start:.1f}s", flush=True)
-        result = run(
-            *as_user(root.name),
-            "/usr/bin/env",
-            f"PATH={bindir}:/usr/bin:/bin",
-            f"LD_LIBRARY_PATH={root}/native-libs",
-            root / "venv/bin/python",
-            root / "check_upgrade.py",
-            "--native",
-            root,
-            series,
-            cwd=root,
-            check=False,
-            timeout=600,
-        ).returncode
+        result = run_assertions(root, bindir, series)
         print(
             f"Combined staging assertions completed in {monotonic() - test_start:.1f}s, exit={result}",
             flush=True,

@@ -1,5 +1,7 @@
 """Exercise the isolated Odoo login form, addon page and download in Chromium."""
 
+import os
+from pathlib import Path
 from urllib.parse import urlencode, urlsplit, urlunsplit
 
 from fixture import FixtureHost, ProcessHost, shell
@@ -72,10 +74,23 @@ def verify(
     assert database in host.config.deployment.databases
     origin = urlunsplit((url.scheme, url.netloc, "", "", ""))
     login = "/web/login?" + urlencode({"db": database, "redirect": PAGE, "login": LOGIN})
+    launch_options = {}
+    if not isinstance(host, ProcessHost):
+        storage = Path(host.odoo.config_file).parent / "browser"
+        storage.mkdir(mode=0o700)
+        environment = {k: v for k, v in os.environ.items() if k != "LD_LIBRARY_PATH"}
+        for variable in ("XDG_CONFIG_HOME", "XDG_CACHE_HOME"):
+            directory = storage / variable
+            directory.mkdir(mode=0o700)
+            environment[variable] = str(directory)
+        environment["CHROME_CONFIG_HOME"] = environment["XDG_CONFIG_HOME"]
+        launch_options = {
+            "channel": "chrome",
+            "env": environment,
+            "args": ["--disable-crashpad-for-testing"],
+        }
     with sync_playwright() as playwright:
-        browser = playwright.chromium.launch(
-            channel=None if isinstance(host, ProcessHost) else "chrome"
-        )
+        browser = playwright.chromium.launch(**launch_options)
         context = browser.new_context(
             base_url=origin, accept_downloads=True, service_workers="block"
         )
