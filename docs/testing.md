@@ -2,7 +2,7 @@
 
 ## Support and verification
 
-| Component | Scope | Evidence for 0.3.0.dev0 |
+| Component | Scope | Integration evidence from development commits |
 | --- | --- | --- |
 | Ubuntu | Target platform for execution | Linux lock and journal binding regressions passed on Ubuntu CI. |
 | Odoo 18.0 | Targeted | Combined systemd deployment, partial failure and authenticated Chromium restore passed against `18.0-20261112` on hosted Ubuntu. |
@@ -12,7 +12,7 @@
 | Multi-database | Implemented | Verified with Git fixtures and real Odoo on three explicitly allowlisted databases, including intentional failure of the second upgrade. |
 | GitHub Actions and SSH | Implemented | Workflow syntax, Bash stub and disposable OpenSSH passed, including forced-command and host-key checks. Deployment from GitHub to a real staging instance remains pending. |
 
-Ubuntu is the deployment target. Windows supports development and offline planning. See the [Phase 3.7 combined staging report](phase-37-combined-staging.md), [Phase 3.6 verification report](phase-36-beta-validation.md) and [Phase 3.5 integration report](phase-35-integration-report.md) for tested revisions and evidence.
+Ubuntu is the deployment target. Windows supports development and offline planning. The integration evidence below records the development revisions actually exercised. See the [0.3.0a1 release notes](releases/0.3.0a1.md), [Phase 3.7 combined staging report](phase-37-combined-staging.md), [Phase 3.6 verification report](phase-36-beta-validation.md) and [Phase 3.5 integration report](phase-35-integration-report.md).
 
 ## Hermetic suite
 
@@ -94,9 +94,9 @@ Use a verified local Docker daemon. Image builds and database installs may take 
 | Real systemd stop/start, sudo scope, process identity and health | Passed with the synthetic service on Ubuntu 24.04. |
 | Real Odoo, PostgreSQL and systemd deployment together | Passed for both Odoo versions on hosted Ubuntu 24.04. |
 | Restricted command on a real OpenSSH server | Passed against disposable loopback OpenSSH. |
-| GitHub Actions SSH to a restricted staging user | Pending an authorized disposable staging host. |
+| Independent GitHub Actions SSH to an external restricted staging host | **PENDING**. Requires evidence from an authorized disposable external host. |
 | Functional Odoo restore | Passed for both Odoo versions after an intentional deployment failure. An independent Odoo unit and PostgreSQL cluster served the recovered record and attachment. |
 
 See the [staging procedure](operations.md#staging-validation-before-production) for the remaining service and application checks.
 
-Keep GhostDeploy Alpha. Use the [independent Alpha staging kit](../validation/staging/README.md) on an explicitly authorized disposable host to verify environment approval, branch restrictions, SSH policy, and remote failure reporting with the generated workflow. See the [Phase 3.8 report](phase-38-external-validation.md) for the current gate status.
+GhostDeploy remains Alpha for disposable staging evaluation. Use the [independent Alpha staging kit](../validation/staging/README.md) on an explicitly authorized disposable host to verify environment approval, branch restrictions, SSH policy, and remote failure reporting with the generated workflow. See the [Phase 3.8 report](phase-38-external-validation.md) for the current gate status and the [maintainer checklist](alpha-release.md) for publication checks.

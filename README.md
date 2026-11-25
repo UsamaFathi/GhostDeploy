@@ -1,46 +1,68 @@
 # GhostDeploy
 
-GhostDeploy is an MIT-licensed deployment toolkit for developers who maintain self-hosted Odoo. It turns the usual SSH, Git, module upgrade, restart and verification steps into one auditable operation. You run it on your own host. It sends no telemetry and keeps backups on storage you control.
+GhostDeploy automates reviewed custom addon deployments to self-hosted Odoo. It verifies the target Git revision, backs up the affected databases and filestores, upgrades selected modules, restarts Odoo and records the outcome. GhostDeploy is [MIT-licensed](LICENSE) and runs on infrastructure you control, without a GhostDeploy server or subscription.
 
-GhostDeploy 0.3.0.dev0 is **alpha**. It targets Odoo 18.0 and 19.0 on Ubuntu with one systemd service, PostgreSQL and a GitHub repository of custom addons. Start with the [Quick start](docs/quick-start.md) for workstation, Odoo host and GitHub steps. The [support and verification matrix](docs/testing.md#support-and-verification) lists the checks that have run and the staging gates that remain.
+**0.3.0a1 · Public Alpha · Experimental, staging evaluation only.** Use a dedicated disposable host and synthetic data. Do not use this Alpha in production. Independent external SSH deployment remains **PENDING**. [Release notes](docs/releases/0.3.0a1.md)
 
-Independent Odoo developers can evaluate GhostDeploy on a dedicated disposable VM using the [Alpha staging kit](validation/staging/README.md). Hosted validation has exercised real Odoo 18 and 19 upgrades, systemd restarts, partial failure, and authenticated restore. The deployment from GitHub Actions to an independently reachable restricted SSH host remains pending. [Combined staging evidence](docs/phase-37-combined-staging.md) · [Draft Alpha release checklist](docs/alpha-release.md)
+## Supported setup
+
+GhostDeploy targets Ubuntu with Python 3.11+, Odoo 18.0 or 19.0, PostgreSQL, a dedicated systemd service and a full Git checkout of custom addons. Deploy locally from the host or use the generated GitHub Actions workflow with a pinned SSH host key and a forced command for the dedicated deployment identity. [Architecture and trust boundaries](docs/architecture.md) · [GitHub Actions setup](docs/github-actions.md)
+
+## Evaluate it on disposable staging
+
+Install the verified wheel in an isolated environment. Obtain it from the reviewed candidate or build it from a reviewed commit as shown in the Quick Start. Compare its SHA-256 against the maintainer's manifest before installing. Use the administrator-owned environment in the installation guide for systemd and SSH setup.
 
 ```sh
 python3 -m venv .venv
 . .venv/bin/activate
-python -m pip install -e '.[dev]'
+python -m pip install ./ghostdeploy-0.3.0a1-py3-none-any.whl
+ghostdeploy version
 ghostdeploy validate --config examples/staging-odoo19.yml
 ```
 
-Install a wheel built from a reviewed Git commit on the server. The project has not been published to PyPI. On Ubuntu, the wizard can suggest a selected service's paths, addon roots and declared database names. Enter the database allowlist explicitly. `init --non-interactive --databases training_east,training_west` works without an Odoo installation. Run `doctor` on the target host as the Odoo account.
+This staging configuration uses two explicitly selected synthetic databases. Set the paths to match your disposable VM. Keep the host copy under administrator control. [Quick Start](docs/quick-start.md) · [Install, upgrade and uninstall](docs/installation.md) · [Configuration reference](docs/reference.md)
 
-| Command | Purpose |
-| --- | --- |
-| `ghostdeploy validate --output json` | Check schema and report warnings without reading the host. |
-| `ghostdeploy doctor` | Report PASS, WARN, FAIL or SKIP for host, checkout, database and SSH prerequisites. |
-| `ghostdeploy plan --base-sha "$BASE" --target-sha "$TARGET"` | Compare exact Git revisions and identify candidate upgrades and review items. |
-| `ghostdeploy plan --inspect-databases --target-sha "$TARGET"` | Read installed module states from the configured database allowlist on the host. |
-| `ghostdeploy deploy --dry-run --target-sha "$TARGET"` | Preview without fetching, writing files, restarting or upgrading. |
-| `ghostdeploy deploy --execute --target-sha "$TARGET" --upgrade attendance` | Apply the exact revision and approve the installed `attendance` candidate under the default review policy. |
-| `ghostdeploy workflow setup` | Show the SSH, pinned host key and GitHub environment checklist. |
-| `ghostdeploy workflow generate --manual-only` | Generate a branch-scoped manual workflow for the first staging run. |
-| `ghostdeploy version` | Print the installed package version. |
-
-The executor holds a per-service lock and accepts only a clean checkout and a full commit SHA that can be fast-forwarded. A deployment that fetches, including GitHub Actions, requires the current branch tip. Database inspection records the identity and installed addon versions of every allowlisted database. If `attendance` is installed in only two of three allowed databases, GhostDeploy requests its upgrade only in those two and verifies the reported version afterward. A service stop and start still affects every database the instance serves. The [Phase 3.5 integration report](docs/phase-35-integration-report.md) distinguishes direct Odoo CLI evidence, executor coverage, and real host gates.
-
-For upgrades, GhostDeploy checks storage, stops Odoo, and verifies PostgreSQL dumps and matching filestore archives before switching the Git revision. It writes a durable phase journal before code or database changes. When an upgrade fails, GhostDeploy records completed databases and the uncertain database, stops further upgrades and requires operator reconciliation. Restore and rollback are manual. See [operations](docs/operations.md) for the sequence, failure states and a restore drill.
-
-Trust the configured Git branch and the Odoo service account. Addon upgrades execute trusted application code with that account. Use protected branches and GitHub environments, tightly scoped systemd permissions, a PostgreSQL role without database creation privileges, and the [SSH setup guide](docs/github-actions.md). Root SSH, untrusted pull requests and automatic production pushes are outside the design.
-
-The first release expects a dedicated, direct systemd launch and a regular Git checkout. It blocks addon removal, changes to dependency metadata and target trees with symlinks or submodules. Availability checks are limited to systemd status and an optional local HTTP probe. Containers, additional platforms, coordinated multi-service deployments and automatic rollback are deferred. The [CLI and configuration reference](docs/reference.md) explains the boundaries and review rules.
-
-```sh
-pytest
-ruff check .
-ruff format --check .
-python -m build
-python -m twine check --strict dist/*
+```yaml
+schema_version: 1
+project:
+  name: odoo-training
+odoo:
+  version: "19.0"
+  service: odoo19
+  service_user: odoo
+  executable: /opt/odoo/server/odoo-bin
+  interpreter: /opt/odoo/venv/bin/python
+  config_file: /etc/odoo19.conf
+  addons_path: [/srv/odoo/custom-addons/addons]
+repository:
+  branch: main
+  checkout_path: /srv/odoo/custom-addons
+deployment:
+  environment: staging
+  databases: [training_east, training_west]
+  state_path: /var/lib/ghostdeploy
+  backup:
+    enabled: true
+    path: /var/backups/ghostdeploy
 ```
 
-See [installation and upgrades](docs/installation.md), [first deployment](docs/first-deployment.md), [multiple databases](docs/multi-database.md), [backup and recovery](docs/operations.md), [troubleshooting](docs/troubleshooting.md) and [security](SECURITY.md). The [test and release guide](docs/testing.md) explains how to run the PostgreSQL and Odoo suites without a VPS. [Phase 3 report](docs/phase-3-report.md) · [Contributing](CONTRIBUTING.md)
+1. Run `ghostdeploy init` to create a configuration, then `validate` and `doctor` to check it. Run host checks as the dedicated Odoo account.
+2. Run `ghostdeploy plan --inspect-databases --target-sha "$TARGET"` with the full reviewed commit SHA. Review candidate modules and the explicit allowlist before scheduling the restart.
+3. Run `ghostdeploy workflow setup` for restricted SSH and environment approval, and `ghostdeploy workflow generate --manual-only` to generate a manual workflow. Follow the staging tutorial for an authorized execution and for interpreting the journal. [First deployment tutorial](docs/first-deployment.md)
+
+## Deployment safeguards
+
+- **Commit and upgrade scope.** GhostDeploy verifies the exact commit and a clean checkout, refuses unsafe Git changes and restricts upgrades to approved candidates on the configured database allowlist.
+- **Shared service.** Stopping or restarting Odoo interrupts every database served by that unit, including databases outside the allowlist. Shared addon code can affect those databases. Review compatibility across the instance before deploying. [Multi-database guide](docs/multi-database.md)
+- **Backup and recovery.** GhostDeploy checks storage, stops Odoo, verifies PostgreSQL and filestore backup artifacts before upgrading, and records progress in a durable journal. A partial failure blocks retries until operator reconciliation. Restoration and rollback are manual. [Recovery guide](docs/operations.md)
+- **Access and trust.** Use a reviewed, protected branch, administrator-controlled configuration, scoped sudo and restricted SSH. Approved addon code executes as the Odoo service account. [Security guidance](SECURITY.md)
+
+## Verification and limits
+
+Hosted Ubuntu integration exercised Odoo 18 and 19 with real PostgreSQL, systemd, multi-database upgrades, intentional partial failure and authenticated browser recovery. A separate disposable OpenSSH test exercised the restricted gateway over loopback. The [verification matrix](docs/testing.md#support-and-verification) and [release notes](docs/releases/0.3.0a1.md) link to exact tested commits and runs.
+
+The Alpha targets one direct systemd service and a full Git checkout. Symlinks, submodules and risky addon removals or dependency changes can block execution. The optional HTTP probe checks reachability. Verify Odoo and your application after deployment. [Operations and limits](docs/operations.md)
+
+## Contribute and test
+
+Use the [contributor guide](CONTRIBUTING.md) for local tests and reviews. Independent Odoo developers can use the [Alpha staging kit](validation/staging/README.md) and submit sanitized evidence with the [Alpha validation issue form](https://github.com/UsamaFathi/GhostDeploy/issues/new?template=alpha-validation.yml). Report suspected vulnerabilities through GitHub's private reporting feature if enabled, or contact the maintainers privately. [Security reporting](SECURITY.md)

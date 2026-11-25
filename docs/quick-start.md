@@ -4,7 +4,7 @@ This walkthrough uses an existing Odoo 19 installation on a disposable Ubuntu VM
 
 ## 1. On your workstation
 
-Clone GhostDeploy and build the wheel from a reviewed commit. Use the full SHA of the development revision you chose to evaluate.
+Clone GhostDeploy and build the wheel from a reviewed full commit SHA that contains version `0.3.0a1`.
 
 ```sh
 git clone https://github.com/UsamaFathi/GhostDeploy.git
@@ -30,7 +30,7 @@ Use a dedicated addons checkout and install the verified wheel in the admin-owne
 
 ```sh
 sudo python3 -m venv /opt/ghostdeploy/venv
-sudo /opt/ghostdeploy/venv/bin/python -m pip install /root/ghostdeploy-0.3.0.dev0-py3-none-any.whl
+sudo /opt/ghostdeploy/venv/bin/python -m pip install /root/ghostdeploy-0.3.0a1-py3-none-any.whl
 sudo install -d -o odoo -g odoo -m 0700 /var/lib/ghostdeploy /var/backups/ghostdeploy
 sudo -H -u odoo /opt/ghostdeploy/venv/bin/ghostdeploy init --config /var/lib/odoo/ghostdeploy.yml
 sudo install -o root -g odoo -m 0640 /var/lib/odoo/ghostdeploy.yml /etc/ghostdeploy.yml

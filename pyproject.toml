@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "ghostdeploy"
-version = "0.3.0.dev0"
+version = "0.3.0a1"
 description = "Deployment automation for self-hosted Odoo"
 readme = "README.md"
 requires-python = ">=3.11"

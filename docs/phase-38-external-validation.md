@@ -1,6 +1,6 @@
 # Phase 3.8 external validation and Alpha preparation
 
-GhostDeploy remains **Alpha**, version `0.3.0.dev0`. The fetched `main` baseline was `8b53a1326a4aab3ce482b9db3426302b0b0bb61b`. The proposed public Alpha version is `0.3.0a1`, subject to maintainer approval. [Draft release notes and checklist](alpha-release.md)
+Phase 3.8 ran against **Alpha** development version `0.3.0.dev0`. The fetched `main` baseline was `8b53a1326a4aab3ce482b9db3426302b0b0bb61b`. See the later [0.3.0a1 release notes](releases/0.3.0a1.md) and [maintainer checklist](alpha-release.md) for release preparation.
 
 The SSH fix is `f824da771988d3b4ea1dcc73296bd2ae1300b691`. The final implementation tested for Phase 3.8 is `ebde21cf66324560ca4f5388ac4ec5510075c231`. The subsequent report commit records results and operator clarifications.
 

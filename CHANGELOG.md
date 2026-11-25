@@ -1,8 +1,9 @@
 # Changelog
 
-## 0.3.0.dev0 (unreleased)
+## 0.3.0a1 (2026-11-25, prepared for publication)
 
-- Add an external Alpha staging kit, sanitized validation issue form, and draft release procedure.
+- Prepare the first public Alpha for staging evaluation. Independent GitHub Actions deployment to an external staging host remains pending.
+- Add an external Alpha staging kit, sanitized validation issue form, and maintainer release procedure.
 - Return a failing SSH exit status for incomplete or unsuccessful deployment reports.
 - Add hosted combined staging checks with native Odoo, private PostgreSQL clusters, real systemd and authenticated recovery.
 - Run hosted Odoo 18 browser validation with pinned headless Chromium and report skipped systemd assertions separately from a pass.

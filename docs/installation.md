@@ -6,7 +6,7 @@ Prefer a wheel built from a reviewed full Git SHA. This keeps the chosen GhostDe
 
 ```sh
 sudo python3 -m venv /opt/ghostdeploy/venv
-sudo /opt/ghostdeploy/venv/bin/python -m pip install /root/ghostdeploy-0.3.0.dev0-py3-none-any.whl
+sudo /opt/ghostdeploy/venv/bin/python -m pip install /root/ghostdeploy-0.3.0a1-py3-none-any.whl
 sudo install -d -m 0700 -o odoo -g odoo /var/lib/ghostdeploy /var/backups/ghostdeploy
 sudo install -m 0640 -o root -g odoo ghostdeploy.yml /etc/ghostdeploy.yml
 sudo -H -u odoo /opt/ghostdeploy/venv/bin/ghostdeploy doctor --config /etc/ghostdeploy.yml
@@ -49,7 +49,7 @@ sudo /opt/ghostdeploy/venv/bin/python -m pip install --upgrade "$REVIEWED_WHEEL"
 sudo -H -u odoo /opt/ghostdeploy/venv/bin/ghostdeploy doctor --config /etc/ghostdeploy.yml
 ```
 
-For an existing production Actions workflow, regenerate or review the dispatch step to adopt the new confirmation input. This input is enforced by the generated workflow. It does not change the host's forced-command protocol.
+Regenerate workflows from earlier development builds and compare the result before adopting it. The current production workflow generator requires explicit confirmation in addition to environment protections. Alpha evaluation is limited to disposable staging.
 
 ## Uninstall GhostDeploy
 
